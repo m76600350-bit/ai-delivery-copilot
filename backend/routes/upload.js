@@ -1,23 +1,15 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const XLSX = require('xlsx');
 
 const router = express.Router();
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => cb(null, file.originalname),
-});
-
+// Serverless environments (e.g. Vercel) only allow writes under /tmp and give
+// no guarantee a written file survives past the current invocation, so the
+// upload is kept in memory and parsed straight from the buffer.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (ext !== '.xlsx' && ext !== '.xls') {
@@ -30,8 +22,8 @@ const upload = multer({
 // In-memory cache of the last parsed stats, so /api/stats works without re-upload
 let lastStats = null;
 
-function parseWorkbook(filePath) {
-  const workbook = XLSX.readFile(filePath);
+function parseWorkbook(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
@@ -93,7 +85,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    const stats = parseWorkbook(req.file.path);
+    const stats = parseWorkbook(req.file.buffer);
     lastStats = stats;
     res.json(stats);
   } catch (err) {
