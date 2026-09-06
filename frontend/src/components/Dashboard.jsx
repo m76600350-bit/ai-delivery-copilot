@@ -63,7 +63,14 @@ export default function Dashboard({ stats, onReset }) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">Статистика</h2>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800">Статистика</h2>
+          {stats.lastSyncedAt && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              Последняя синхронизация с Jira: {new Date(stats.lastSyncedAt).toLocaleString('ru-RU')}
+            </p>
+          )}
+        </div>
         <button
           onClick={onReset}
           className="text-sm text-blue-600 hover:underline"

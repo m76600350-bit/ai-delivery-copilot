@@ -1,9 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Upload from './components/Upload.jsx';
 import Dashboard from './components/Dashboard.jsx';
+import JiraPanel from './components/JiraPanel.jsx';
+import { getJiraStatus } from './api.js';
 
 export default function App() {
   const [stats, setStats] = useState(null);
+  const [jiraStatus, setJiraStatus] = useState(null);
+
+  const refreshJiraStatus = useCallback(async () => {
+    try {
+      setJiraStatus(await getJiraStatus());
+    } catch {
+      setJiraStatus({ connected: false, issueCount: 0, lastSyncedAt: null });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshJiraStatus();
+  }, [refreshJiraStatus]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -13,7 +28,10 @@ export default function App() {
 
       <main className="p-6">
         {!stats ? (
-          <Upload onUploaded={setStats} />
+          <div className="space-y-6">
+            <JiraPanel status={jiraStatus} onStatusChange={setJiraStatus} onDataLoaded={setStats} />
+            <Upload onUploaded={setStats} />
+          </div>
         ) : (
           <Dashboard stats={stats} onReset={() => setStats(null)} />
         )}
