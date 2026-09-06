@@ -27,4 +27,19 @@ export async function getJiraIssues() {
   return res.data;
 }
 
+export async function getJiraFields() {
+  const res = await api.get('/jira/fields');
+  return res.data;
+}
+
+export async function getFieldMapping() {
+  const res = await api.get('/jira/field-mapping');
+  return res.data;
+}
+
+export async function saveFieldMapping(mapping) {
+  const res = await api.post('/jira/field-mapping', { mapping });
+  return res.data;
+}
+
 export default api;

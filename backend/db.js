@@ -44,6 +44,7 @@ async function ensureSchema() {
         resolved_at TIMESTAMPTZ,
         cycle_time NUMERIC,
         sprint TEXT,
+        story_points NUMERIC,
         labels TEXT,
         last_synced_at TIMESTAMPTZ,
         is_deleted BOOLEAN NOT NULL DEFAULT false
@@ -59,6 +60,20 @@ async function ensureSchema() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_issue_history_issue_id ON issue_history(issue_id);
+
+      -- Maps our internal canonical field names (sprint, team, story_points, ...)
+      -- to the actual Jira custom field id for a given site, since those ids
+      -- differ per Jira Cloud instance and can't be hardcoded.
+      CREATE TABLE IF NOT EXISTS jira_field_mapping (
+        id SERIAL PRIMARY KEY,
+        cloud_id TEXT NOT NULL,
+        canonical_field TEXT NOT NULL,
+        jira_field_id TEXT NOT NULL,
+        UNIQUE (cloud_id, canonical_field)
+      );
+
+      -- Backfills story_points on an issues table created before this column existed.
+      ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

@@ -15,7 +15,7 @@ ai-delivery-copilot/
 │   └── routes/
 │       ├── upload.js     # POST /api/upload, GET /api/stats
 │       ├── auth.js       # GET /api/auth/login, /api/auth/callback (Jira OAuth)
-│       └── jira.js       # POST /api/jira/sync, GET /api/jira/status, /api/jira/issues
+│       └── jira.js       # sync/status/issues/fields/field-mapping
 ├── frontend/           # React + Vite + Tailwind
 │   ├── package.json
 │   ├── index.html
@@ -27,7 +27,8 @@ ai-delivery-copilot/
 │   │   └── components/
 │   │       ├── Upload.jsx
 │   │       ├── Dashboard.jsx
-│   │       └── JiraPanel.jsx
+│   │       ├── JiraPanel.jsx
+│   │       └── FieldMapping.jsx
 │   └── public/
 │       └── index.html
 └── README.md
@@ -101,6 +102,11 @@ npm run dev
 2. **Синхронизация** — `POST /api/jira/sync` берёт актуальный access token (автоматически обновляя его через `refresh_token`, если истёк), запрашивает issues проекта `SCRUM` через `GET .../rest/api/3/search` и для каждой issue делает UPSERT в таблицу `issues`: если `issue_key` уже есть — сравнивает поля `status`, `assignee`, `sprint`, `priority` со старыми значениями и при изменении пишет запись в `issue_history`, затем обновляет строку; если issue новая — создаёт запись. Существующие записи никогда не удаляются автоматически (`is_deleted` зарезервировано для будущей логики). `last_synced_at` обновляется для каждой обработанной issue.
 3. **Статус** — `GET /api/jira/status` возвращает `{ connected, issueCount, lastSyncedAt }`.
 4. **Данные для дашборда** — `GET /api/jira/issues` отдаёт содержимое таблицы `issues` в том же формате, что и `POST /api/upload` (`total`/`byStatus`/`byTeam`/`byType`/`issues`), плюс `lastSyncedAt` — поэтому `Dashboard.jsx` одинаково рендерит и загруженный XLSX, и данные из БД.
+5. **Маппинг полей** — id кастомных полей (`customfield_XXXXX`) уникальны для каждого Jira-сайта, поэтому Sprint/Team/Story Points не хардкодятся, а настраиваются через UI:
+   - `GET /api/jira/fields` — список всех полей текущего Jira-сайта (`id` + `name`) через `GET /rest/api/3/field`.
+   - `GET /api/jira/field-mapping` / `POST /api/jira/field-mapping` — чтение и сохранение соответствия `canonical_field → jira_field_id` в таблице `jira_field_mapping` (ключ — `cloud_id`, так что маппинг привязан к конкретному Jira-сайту).
+   - На фронтенде это экран **«Настройка полей Jira»** ([FieldMapping.jsx](frontend/src/components/FieldMapping.jsx)) — dropdown на каждое поле, опции берутся из `/api/jira/fields`, кнопка «Сохранить маппинг». Открывается автоматически сразу после первого подключения Jira (если маппинг ещё пустой) и в любой момент повторно — кнопкой **«Настройки полей»** в [JiraPanel.jsx](frontend/src/components/JiraPanel.jsx).
+   - Если маппинг не настроен, `POST /api/jira/sync` не падает и не блокируется — просто использует `null` для несопоставленных canonical-полей (для `team` дополнительно есть фолбэк на `labels`, как и раньше).
 
 ### Переменные окружения (backend)
 
@@ -116,6 +122,7 @@ npm run dev
 
 ### Ограничения текущей реализации
 
-- **Sprint** — REST-поиск не возвращает имя спринта без знания id кастомного поля конкретного Jira-сайта (`customfield_XXXXX`), поэтому колонка `sprint` пока всегда `null`. Значение поля легко подставить в `mapJiraFields` в [routes/jira.js](backend/routes/jira.js), как только известен id поля вашего инстанса.
+- **Sprint/Team/Story Points** зависят от того, настроен ли маппинг через UI «Настройки полей» — без него эти поля синкаются как `null` (Team — как `labels`). Значения из Jira извлекаются универсальным хелпером `extractFieldValue` в [routes/jira.js](backend/routes/jira.js), который умеет доставать имя/value из объекта, брать последний элемент массива (актуально для Sprint — Jira отдаёт историю всех спринтов issue) или число.
 - **cycle_time / started_at** — вычисляются эвристически из текущего статуса и `created`/`updated` полей issue, без обращения к changelog. Для точного времени входа в статус потребуется дополнительный запрос `GET /rest/api/3/issue/{key}/changelog` — сознательно не включён в MVP, чтобы не увеличивать число запросов к Jira API при синхронизации большого проекта.
-- Схема БД создаётся автоматически при первом обращении к любому Jira-эндпоинту (`CREATE TABLE IF NOT EXISTS` в [db.js](backend/db.js)) — отдельного шага миграции не требуется.
+- Схема БД создаётся автоматически при первом обращении к любому Jira-эндпоинту (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` в [db.js](backend/db.js)) — отдельного шага миграции не требуется.
+- Маппинг полей общий на всё приложение (по `cloud_id`, без пользовательских аккаунтов) — это согласуется с тем, что и Jira-подключение в текущей реализации одно на всё приложение (одна строка в `jira_tokens`).

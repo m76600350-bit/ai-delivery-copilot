@@ -6,7 +6,7 @@ function formatDate(value) {
   return new Date(value).toLocaleString('ru-RU');
 }
 
-export default function JiraPanel({ status, onStatusChange, onDataLoaded }) {
+export default function JiraPanel({ status, onStatusChange, onDataLoaded, onConfigureFields }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -60,7 +60,7 @@ export default function JiraPanel({ status, onStatusChange, onDataLoaded }) {
               <> · последняя синхронизация: {formatDate(status.lastSyncedAt)}</>
             )}
           </p>
-          <div className="flex gap-4 items-center">
+          <div className="flex gap-4 items-center flex-wrap">
             <button
               onClick={handleSync}
               disabled={isSyncing}
@@ -74,6 +74,14 @@ export default function JiraPanel({ status, onStatusChange, onDataLoaded }) {
                 className="text-sm text-blue-600 hover:underline"
               >
                 Показать данные из базы
+              </button>
+            )}
+            {onConfigureFields && (
+              <button
+                onClick={onConfigureFields}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Настройки полей
               </button>
             )}
           </div>

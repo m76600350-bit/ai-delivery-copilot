@@ -1,17 +1,35 @@
 const express = require('express');
 const { ensureSchema, getPool } = require('../db');
-const { getValidAccessToken, JIRA_API_BASE } = require('../lib/jiraAuth');
+const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/jiraAuth');
 
 const router = express.Router();
 
 const JQL = 'project = SCRUM ORDER BY updated DESC';
-const FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'issuetype', 'project'];
+const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'issuetype', 'project'];
+
+// Internal field names the app understands; each can be pointed at a
+// Jira custom field id via jira_field_mapping since those ids are
+// different on every Jira Cloud site and can't be hardcoded.
+const CANONICAL_FIELDS = ['sprint', 'team', 'story_points'];
 
 // Fields whose changes are worth recording in issue_history; everything else
 // on the row is just kept in sync silently.
 const TRACKED_FIELDS = ['status', 'assignee', 'sprint', 'priority'];
 
-async function fetchAllIssues(accessToken, cloudId) {
+async function getFieldMapping(cloudId) {
+  await ensureSchema();
+  const { rows } = await getPool().query(
+    'SELECT canonical_field, jira_field_id FROM jira_field_mapping WHERE cloud_id = $1',
+    [cloudId]
+  );
+  const mapping = {};
+  for (const row of rows) {
+    mapping[row.canonical_field] = row.jira_field_id;
+  }
+  return mapping;
+}
+
+async function fetchAllIssues(accessToken, cloudId, fields) {
   const issues = [];
   let startAt = 0;
   const maxResults = 100;
@@ -25,7 +43,7 @@ async function fetchAllIssues(accessToken, cloudId) {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ jql: JQL, startAt, maxResults, fields: FIELDS }),
+      body: JSON.stringify({ jql: JQL, startAt, maxResults, fields }),
     });
 
     if (!res.ok) {
@@ -41,12 +59,31 @@ async function fetchAllIssues(accessToken, cloudId) {
   return issues;
 }
 
-// Jira's REST search doesn't return the Sprint field's name/id without
-// knowing the site's custom field id, so it's left null here — filled in
-// once the correct customfield_XXXXX id for this Jira site is known.
-function mapJiraFields(issue) {
+// Jira custom fields come back in several shapes depending on field type:
+// a plain scalar, a single option object ({name} or {value}), or (for
+// Sprint) an array of sprint objects — the most recent one wins.
+function extractFieldValue(rawValue) {
+  if (rawValue == null) return null;
+  if (typeof rawValue === 'number') return rawValue;
+  if (Array.isArray(rawValue)) {
+    return rawValue.length ? extractFieldValue(rawValue[rawValue.length - 1]) : null;
+  }
+  if (typeof rawValue === 'object') {
+    if (typeof rawValue.name === 'string') return rawValue.name;
+    if (typeof rawValue.value === 'string') return rawValue.value;
+    return null;
+  }
+  return String(rawValue);
+}
+
+function mapJiraFields(issue, fieldMapping) {
   const f = issue.fields || {};
   const statusCategory = f.status?.statusCategory?.name || null;
+
+  const sprint = fieldMapping.sprint ? extractFieldValue(f[fieldMapping.sprint]) : null;
+  const mappedTeam = fieldMapping.team ? extractFieldValue(f[fieldMapping.team]) : null;
+  const storyPointsRaw = fieldMapping.story_points ? extractFieldValue(f[fieldMapping.story_points]) : null;
+  const storyPoints = storyPointsRaw == null || storyPointsRaw === '' ? null : Number(storyPointsRaw);
 
   return {
     issueKey: issue.key,
@@ -57,12 +94,15 @@ function mapJiraFields(issue) {
     statusCategory,
     priority: f.priority?.name || null,
     assignee: f.assignee?.displayName || null,
-    team: null,
+    // Falls back to labels when no Team field is mapped, so team breakdowns
+    // keep working before the user configures field mapping.
+    team: mappedTeam,
     createdAt: f.created || null,
     updatedAt: f.updated || null,
     startedAt: statusCategory && statusCategory !== 'To Do' ? f.created : null,
     resolvedAt: statusCategory === 'Done' ? f.updated : null,
-    sprint: null,
+    sprint,
+    storyPoints: Number.isFinite(storyPoints) ? storyPoints : null,
     labels: Array.isArray(f.labels) ? f.labels.join(', ') : '',
   };
 }
@@ -75,18 +115,101 @@ function computeCycleTime(startedAt, resolvedAt) {
   return Math.round(((end - start) / (1000 * 60 * 60 * 24)) * 100) / 100;
 }
 
+// GET /api/jira/fields — lists every field on the connected Jira site
+// (id + name) so the frontend can offer them as field-mapping options.
+router.get('/fields', async (req, res) => {
+  try {
+    const { accessToken, cloudId } = await getValidAccessToken();
+    const response = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/field`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to list Jira fields: ${response.status} ${await response.text()}`);
+    }
+
+    const fields = await response.json();
+    res.json(fields.map((f) => ({ id: f.id, name: f.name })));
+  } catch (err) {
+    if (err.code === 'NOT_CONNECTED') {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/field-mapping — current canonical-field -> Jira field id mapping.
+router.get('/field-mapping', async (req, res) => {
+  try {
+    const token = await getStoredToken();
+    if (!token) {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+    const mapping = await getFieldMapping(token.cloud_id);
+    res.json({ mapping });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/jira/field-mapping — body: { mapping: { sprint, team, story_points } }.
+// Omitting/blanking a field clears its mapping (sync then falls back to null/labels for it).
+router.post('/field-mapping', async (req, res) => {
+  try {
+    await ensureSchema();
+    const token = await getStoredToken();
+    if (!token) {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+
+    const mapping = req.body?.mapping || {};
+    const pool = getPool();
+
+    for (const field of CANONICAL_FIELDS) {
+      const jiraFieldId = mapping[field] || null;
+      if (jiraFieldId) {
+        await pool.query(
+          `INSERT INTO jira_field_mapping (cloud_id, canonical_field, jira_field_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (cloud_id, canonical_field) DO UPDATE SET jira_field_id = EXCLUDED.jira_field_id`,
+          [token.cloud_id, field, jiraFieldId]
+        );
+      } else {
+        await pool.query(
+          'DELETE FROM jira_field_mapping WHERE cloud_id = $1 AND canonical_field = $2',
+          [token.cloud_id, field]
+        );
+      }
+    }
+
+    res.json({ ok: true, mapping: await getFieldMapping(token.cloud_id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/sync', async (req, res) => {
   try {
     await ensureSchema();
     const { accessToken, cloudId } = await getValidAccessToken();
-    const rawIssues = await fetchAllIssues(accessToken, cloudId);
+
+    // Field mapping is optional — unmapped canonical fields simply come back
+    // null (team falls back to labels) instead of blocking the sync.
+    const fieldMapping = await getFieldMapping(cloudId);
+    const extraFields = CANONICAL_FIELDS.map((f) => fieldMapping[f]).filter(Boolean);
+    const fields = [...new Set([...BASE_FIELDS, ...extraFields])];
+
+    const rawIssues = await fetchAllIssues(accessToken, cloudId, fields);
     const pool = getPool();
 
     let createdCount = 0;
     let updatedCount = 0;
 
     for (const raw of rawIssues) {
-      const mapped = mapJiraFields(raw);
+      const mapped = mapJiraFields(raw, fieldMapping);
+      if (!mapped.team) {
+        mapped.team = mapped.labels || null;
+      }
       const cycleTime = computeCycleTime(mapped.startedAt, mapped.resolvedAt);
 
       const { rows } = await pool.query('SELECT * FROM issues WHERE issue_key = $1', [mapped.issueKey]);
@@ -97,13 +220,13 @@ router.post('/sync', async (req, res) => {
           `INSERT INTO issues (
              issue_key, project, issue_type, summary, status, status_category,
              priority, assignee, team, created_at, updated_at, started_at,
-             resolved_at, cycle_time, sprint, labels, last_synced_at, is_deleted
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now(), false)`,
+             resolved_at, cycle_time, sprint, story_points, labels, last_synced_at, is_deleted
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now(), false)`,
           [
             mapped.issueKey, mapped.project, mapped.issueType, mapped.summary,
             mapped.status, mapped.statusCategory, mapped.priority, mapped.assignee,
             mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
-            mapped.resolvedAt, cycleTime, mapped.sprint, mapped.labels,
+            mapped.resolvedAt, cycleTime, mapped.sprint, mapped.storyPoints, mapped.labels,
           ]
         );
         createdCount += 1;
@@ -126,19 +249,24 @@ router.post('/sync', async (req, res) => {
       await pool.query(
         `UPDATE issues SET
            project = $1, issue_type = $2, summary = $3, status = $4, status_category = $5,
-           priority = $6, assignee = $7, created_at = $8, updated_at = $9, started_at = $10,
-           resolved_at = $11, cycle_time = $12, sprint = $13, labels = $14, last_synced_at = now()
-         WHERE id = $15`,
+           priority = $6, assignee = $7, team = $8, created_at = $9, updated_at = $10, started_at = $11,
+           resolved_at = $12, cycle_time = $13, sprint = $14, story_points = $15, labels = $16, last_synced_at = now()
+         WHERE id = $17`,
         [
           mapped.project, mapped.issueType, mapped.summary, mapped.status, mapped.statusCategory,
-          mapped.priority, mapped.assignee, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
-          mapped.resolvedAt, cycleTime, mapped.sprint, mapped.labels, existing.id,
+          mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
+          mapped.resolvedAt, cycleTime, mapped.sprint, mapped.storyPoints, mapped.labels, existing.id,
         ]
       );
       updatedCount += 1;
     }
 
-    res.json({ total: rawIssues.length, created: createdCount, updated: updatedCount });
+    res.json({
+      total: rawIssues.length,
+      created: createdCount,
+      updated: updatedCount,
+      fieldMappingConfigured: extraFields.length > 0,
+    });
   } catch (err) {
     if (err.code === 'NOT_CONNECTED') {
       return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
@@ -207,6 +335,8 @@ router.get('/issues', async (req, res) => {
         leadTime: '',
         createdAt: row.created_at,
         type: row.issue_type,
+        sprint: row.sprint,
+        storyPoints: row.story_points,
       });
     }
 
