@@ -6,6 +6,8 @@ const router = express.Router();
 
 const REQUIRED_ENV = ['JIRA_CLIENT_ID', 'JIRA_CLIENT_SECRET', 'JIRA_CALLBACK_URL'];
 const STATE_COOKIE = 'jira_oauth_state';
+// FRONTEND_URL overrides this for other environments (e.g. local dev, a preview deploy).
+const DEFAULT_FRONTEND_URL = 'https://ai-delivery-copilot.vercel.app';
 
 function assertJiraEnv() {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -115,18 +117,8 @@ router.get('/callback', async (req, res) => {
       cloudId,
     });
 
-    if (process.env.FRONTEND_URL) {
-      return res.redirect(`${process.env.FRONTEND_URL}?jira=connected`);
-    }
-
-    res.send(`
-      <html>
-        <body style="font-family: sans-serif; padding: 40px;">
-          <h2>Jira подключён</h2>
-          <p>Можно закрыть эту вкладку и вернуться в приложение.</p>
-        </body>
-      </html>
-    `);
+    const frontendUrl = process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL;
+    res.redirect(`${frontendUrl}?jira=connected`);
   } catch (err) {
     res.status(500).send(`OAuth callback error: ${err.message}`);
   }

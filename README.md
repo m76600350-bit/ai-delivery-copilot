@@ -98,7 +98,7 @@ npm run dev
 
 ### Как это работает
 
-1. **Авторизация** — `GET /api/auth/login` редиректит пользователя на страницу согласия Jira (`auth.atlassian.com/authorize`), защищено CSRF-параметром `state` в HttpOnly-куке. `GET /api/auth/callback` обменивает код на `access_token`/`refresh_token`, запрашивает `cloud_id` сайта через `accessible-resources` и сохраняет токены в таблице `jira_tokens` (одна активная запись, при повторном подключении перезаписывается).
+1. **Авторизация** — `GET /api/auth/login` редиректит пользователя на страницу согласия Jira (`auth.atlassian.com/authorize`), защищено CSRF-параметром `state` в HttpOnly-куке. `GET /api/auth/callback` обменивает код на `access_token`/`refresh_token`, запрашивает `cloud_id` сайта через `accessible-resources`, сохраняет токены в таблице `jira_tokens` (одна активная запись, при повторном подключении перезаписывается) и редиректит обратно на фронтенд с `?jira=connected` (по умолчанию — `https://ai-delivery-copilot.vercel.app`, переопределяется через `FRONTEND_URL`). Фронтенд ([App.jsx](frontend/src/App.jsx)) читает этот параметр при первом рендере, сразу показывает статус «подключено» и сообщение «Jira успешно подключена», затем убирает параметр из URL через `history.replaceState` и всё равно уточняет статус через `GET /api/jira/status`.
 2. **Синхронизация** — `POST /api/jira/sync` берёт актуальный access token (автоматически обновляя его через `refresh_token`, если истёк), запрашивает issues проекта `SCRUM` через `GET .../rest/api/3/search` и для каждой issue делает UPSERT в таблицу `issues`: если `issue_key` уже есть — сравнивает поля `status`, `assignee`, `sprint`, `priority` со старыми значениями и при изменении пишет запись в `issue_history`, затем обновляет строку; если issue новая — создаёт запись. Существующие записи никогда не удаляются автоматически (`is_deleted` зарезервировано для будущей логики). `last_synced_at` обновляется для каждой обработанной issue.
 3. **Статус** — `GET /api/jira/status` возвращает `{ connected, issueCount, lastSyncedAt }`.
 4. **Данные для дашборда** — `GET /api/jira/issues` отдаёт содержимое таблицы `issues` в том же формате, что и `POST /api/upload` (`total`/`byStatus`/`byTeam`/`byType`/`issues`), плюс `lastSyncedAt` — поэтому `Dashboard.jsx` одинаково рендерит и загруженный XLSX, и данные из БД.
@@ -116,7 +116,7 @@ npm run dev
 | `JIRA_CLIENT_ID` | Client ID OAuth 2.0 (3LO) приложения в [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/) |
 | `JIRA_CLIENT_SECRET` | Client Secret того же приложения |
 | `JIRA_CALLBACK_URL` | URL обратного вызова, должен **точно** совпадать со значением в настройках приложения, например `https://ai-delivery-copilot-backend.vercel.app/api/auth/callback` |
-| `FRONTEND_URL` *(опционально)* | если задан, `/api/auth/callback` после успешной авторизации редиректит сюда с `?jira=connected`; если не задан — показывает простую HTML-страницу с подтверждением |
+| `FRONTEND_URL` *(опционально)* | куда `/api/auth/callback` редиректит после успешной авторизации (добавляется `?jira=connected`); по умолчанию `https://ai-delivery-copilot.vercel.app` — задайте, если фронтенд развёрнут на другом домене или для локальной разработки |
 
 В приложении Jira нужно включить OAuth 2.0 (3LO) и выдать API-scopes `read:jira-work`, `read:jira-user`, `offline_access` (последний обязателен для получения `refresh_token`).
 
