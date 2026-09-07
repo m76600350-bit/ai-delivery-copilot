@@ -39,10 +39,24 @@ function BreakdownCard({ title, data }) {
   );
 }
 
-export default function Dashboard({ stats, onReset }) {
+export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [teamFilter, setTeamFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(null);
+
+  const handleSyncJira = async () => {
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      await onSyncJira();
+    } catch (err) {
+      setSyncError(err.response?.data?.error || 'Не удалось синхронизировать данные из Jira');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const statuses = useMemo(() => Object.keys(stats.byStatus || {}), [stats]);
   const teams = useMemo(() => Object.keys(stats.byTeam || {}), [stats]);
@@ -71,13 +85,28 @@ export default function Dashboard({ stats, onReset }) {
             </p>
           )}
         </div>
-        <button
-          onClick={onReset}
-          className="text-sm text-blue-600 hover:underline"
-        >
-          Загрузить другой файл
-        </button>
+        <div className="flex items-center gap-4">
+          {jiraConnected && (
+            <button
+              onClick={handleSyncJira}
+              disabled={isSyncing}
+              className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isSyncing ? 'Синхронизация...' : 'Обновить данные из Jira'}
+            </button>
+          )}
+          <button
+            onClick={onReset}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Загрузить другой файл
+          </button>
+        </div>
       </div>
+
+      {syncError && (
+        <p className="text-sm text-red-600 -mt-4">{syncError}</p>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard title="Всего задач" value={stats.total} />

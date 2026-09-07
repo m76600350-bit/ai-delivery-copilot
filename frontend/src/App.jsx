@@ -3,7 +3,7 @@ import Upload from './components/Upload.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import JiraPanel from './components/JiraPanel.jsx';
 import FieldMapping from './components/FieldMapping.jsx';
-import { getJiraStatus, getFieldMapping } from './api.js';
+import { getJiraStatus, getFieldMapping, syncJira, getJiraIssues } from './api.js';
 
 // /api/auth/callback redirects here with ?jira=connected once the OAuth flow
 // finishes. Read it once during the initial render (lazy state init), not
@@ -48,6 +48,16 @@ export default function App() {
         setJiraStatus({ connected: false, issueCount: 0, lastSyncedAt: null });
       }
     }
+  }, []);
+
+  // Shared by the "Синхронизировать данные из Jira" button on the connect
+  // screen and the "Обновить данные из Jira" button on the dashboard itself.
+  const syncFromJira = useCallback(async () => {
+    await syncJira();
+    const data = await getJiraIssues();
+    setStats(data);
+    setJiraStatus((prev) => ({ ...(prev || {}), connected: true, issueCount: data.total, lastSyncedAt: data.lastSyncedAt }));
+    return data;
   }, []);
 
   useEffect(() => {
@@ -97,7 +107,12 @@ export default function App() {
             <Upload onUploaded={setStats} />
           </div>
         ) : (
-          <Dashboard stats={stats} onReset={() => setStats(null)} />
+          <Dashboard
+            stats={stats}
+            onReset={() => setStats(null)}
+            jiraConnected={jiraStatus?.connected || false}
+            onSyncJira={syncFromJira}
+          />
         )}
       </main>
     </div>
