@@ -29,21 +29,32 @@ async function getFieldMapping(cloudId) {
   return mapping;
 }
 
+// GET/POST /rest/api/3/search replaced the deprecated /rest/api/3/search
+// endpoint (removed by Atlassian, returns 410 Gone). The new endpoint drops
+// offset-based paging (`startAt`/`total`) for a cursor: each response may
+// carry a `nextPageToken` to pass back on the next call, and `isLast`
+// (or a missing token) marks the end of the result set.
+// https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
 async function fetchAllIssues(accessToken, cloudId, fields) {
   const issues = [];
-  let startAt = 0;
+  let nextPageToken;
   const maxResults = 100;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const res = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/search`, {
+    const body = { jql: JQL, maxResults, fields };
+    if (nextPageToken) {
+      body.nextPageToken = nextPageToken;
+    }
+
+    const res = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/search/jql`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ jql: JQL, startAt, maxResults, fields }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -51,9 +62,11 @@ async function fetchAllIssues(accessToken, cloudId, fields) {
     }
 
     const data = await res.json();
-    issues.push(...data.issues);
-    startAt += data.issues.length;
-    if (data.issues.length === 0 || startAt >= data.total) break;
+    const pageIssues = data.issues || [];
+    issues.push(...pageIssues);
+
+    if (data.isLast || !data.nextPageToken || pageIssues.length === 0) break;
+    nextPageToken = data.nextPageToken;
   }
 
   return issues;
