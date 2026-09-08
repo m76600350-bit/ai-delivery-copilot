@@ -222,11 +222,16 @@ function roundDays(ms) {
   return Math.round((ms / 86400000) * 100) / 100;
 }
 
-// Cycle time = total time spent in "In Progress"-category statuses, summed
-// across every such period (so a reopened-then-restarted issue counts both
-// stretches) — computed by replaying the changelog's status transitions
-// into a chronological timeline of status segments from creation to
-// resolution. Lead time is the simple created→resolved span. Both are null
+// Cycle time = elapsed time from the issue's first move out of the "To Do"
+// category until resolution, minus any time spent back in "Done" (e.g. a
+// reopen-then-restart still counts both work stretches, but not the Done
+// gap between them) — computed by replaying the changelog's status
+// transitions into a chronological timeline of status segments. Everything
+// from that first move onward counts *regardless of category*, including a
+// workflow's intermediate review/QA statuses that happen to be categorized
+// "To Do" (common for board-column reasons) rather than "In Progress" —
+// only the leading backlog run before work starts, and Done time, are
+// excluded. Lead time is the simple created→resolved span. Both are null
 // for unresolved issues; reopen_count (Done → not-Done) is tracked
 // regardless of current resolution state since it's a historical fact.
 function computeLeadCycleReopen({
@@ -297,11 +302,15 @@ function computeLeadCycleReopen({
   segments.push({ statusId: segId, statusName: segName, start: segStart, end: resolvedAt });
 
   let cycleMs = 0;
+  let hasStartedWork = false;
   const segmentLog = [];
   for (const seg of segments) {
     const category = categoryOf(seg.statusId, seg.statusName);
+    if (!hasStartedWork && category !== CATEGORY_KEY.NEW) {
+      hasStartedWork = true;
+    }
     const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
-    const counted = category === CATEGORY_KEY.IN_PROGRESS && ms > 0;
+    const counted = hasStartedWork && category !== CATEGORY_KEY.DONE && ms > 0;
     if (counted) cycleMs += ms;
     if (debug) {
       segmentLog.push({
