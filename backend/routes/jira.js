@@ -104,6 +104,12 @@ function mapJiraFields(issue, fieldMapping) {
     issueType: f.issuetype?.name || null,
     summary: f.summary || null,
     status: f.status?.name || null,
+    // Jira's changelog records status transitions using the status's
+    // numeric id (stable, locale-independent) in from/to, alongside a
+    // fromString/toString that's often the status's *default* name even
+    // when f.status.name above is localized to the viewer's language — so
+    // the id is what changelog-based category lookups must key on.
+    statusId: f.status?.id || null,
     statusCategory,
     priority: f.priority?.name || null,
     assignee: f.assignee?.displayName || null,
@@ -123,9 +129,17 @@ function mapJiraFields(issue, fieldMapping) {
 }
 
 // Site-wide status list (id/name/statusCategory), used to classify each
-// *historical* status name from the changelog into "To Do"/"In Progress"/
-// "Done" — the changelog only gives us status names (fromString/toString),
-// not categories, and a status's category can't be inferred from its name.
+// *historical* status from the changelog into "To Do"/"In Progress"/"Done".
+//
+// Keyed primarily by id, not name: the changelog's fromString/toString are
+// Jira's *default* (English) status names regardless of the account's
+// display locale, while this endpoint (like the issue search API) returns
+// names localized to the requesting user — so on a non-English site
+// "In Progress" from the changelog would never match a name-keyed map built
+// from "В работе" here, silently zeroing out every cycle-time segment. The
+// id space is locale-independent and shared between both endpoints, so it's
+// the only reliable join key; byName is kept only as a defensive fallback
+// for the rare changelog entry that might lack an id.
 async function fetchStatusCategoryMap(accessToken, cloudId) {
   const res = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/status`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
@@ -136,11 +150,14 @@ async function fetchStatusCategoryMap(accessToken, cloudId) {
   }
 
   const statuses = await res.json();
-  const map = {};
+  const byId = {};
+  const byName = {};
   for (const s of statuses) {
-    if (s.name) map[s.name] = s.statusCategory?.name || null;
+    const category = s.statusCategory?.name || null;
+    if (s.id != null) byId[String(s.id)] = category;
+    if (s.name) byName[s.name] = category;
   }
-  return map;
+  return { byId, byName };
 }
 
 // Atlassian's own docs/community reports disagree on the exact envelope of
@@ -202,21 +219,43 @@ function roundDays(ms) {
 // resolution. Lead time is the simple created→resolved span. Both are null
 // for unresolved issues; reopen_count (Done → not-Done) is tracked
 // regardless of current resolution state since it's a historical fact.
-function computeLeadCycleReopen({ createdAt, resolvedAt, currentStatus, histories, statusCategoryByName }) {
-  const categoryOf = (name) => (name == null ? null : statusCategoryByName[name] ?? null);
+function computeLeadCycleReopen({
+  issueKey,
+  createdAt,
+  resolvedAt,
+  currentStatusId,
+  currentStatus,
+  histories,
+  statusCategoryByName,
+  debug,
+}) {
+  const { byId, byName } = statusCategoryByName;
+  // id first (locale-independent — see fetchStatusCategoryMap), name as a
+  // defensive fallback for a changelog entry that somehow lacks an id.
+  const categoryOf = (id, name) => {
+    if (id != null && byId[String(id)] !== undefined) return byId[String(id)];
+    if (name != null && byName[name] !== undefined) return byName[name];
+    return null;
+  };
 
   const statusEvents = histories
     .filter((h) => Array.isArray(h.items) && h.created)
     .flatMap((h) =>
       h.items
         .filter((item) => item.field === 'status')
-        .map((item) => ({ time: h.created, from: item.fromString, to: item.toString }))
+        .map((item) => ({
+          time: h.created,
+          fromId: item.from,
+          toId: item.to,
+          fromName: item.fromString,
+          toName: item.toString,
+        }))
     )
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
   let reopenCount = 0;
   for (const ev of statusEvents) {
-    if (categoryOf(ev.from) === 'Done' && categoryOf(ev.to) !== 'Done') {
+    if (categoryOf(ev.fromId, ev.fromName) === 'Done' && categoryOf(ev.toId, ev.toName) !== 'Done') {
       reopenCount += 1;
     }
   }
@@ -227,27 +266,49 @@ function computeLeadCycleReopen({ createdAt, resolvedAt, currentStatus, historie
       : null;
 
   if (!resolvedAt) {
+    if (debug) {
+      console.log(`[cycle-time] ${issueKey}: unresolved, skipping cycle time (lead=${leadTimeDays})`);
+    }
     return { leadTimeDays: null, cycleTimeDays: null, reopenCount };
   }
 
   // Replay transitions into contiguous [status, start, end) segments.
   const segments = [];
   let segStart = createdAt;
-  let segStatus = statusEvents.length ? statusEvents[0].from : currentStatus;
+  let segId = statusEvents.length ? statusEvents[0].fromId : currentStatusId;
+  let segName = statusEvents.length ? statusEvents[0].fromName : currentStatus;
 
   for (const ev of statusEvents) {
-    segments.push({ status: segStatus, start: segStart, end: ev.time });
+    segments.push({ statusId: segId, statusName: segName, start: segStart, end: ev.time });
     segStart = ev.time;
-    segStatus = ev.to;
+    segId = ev.toId;
+    segName = ev.toName;
   }
-  segments.push({ status: segStatus, start: segStart, end: resolvedAt });
+  segments.push({ statusId: segId, statusName: segName, start: segStart, end: resolvedAt });
 
   let cycleMs = 0;
+  const segmentLog = [];
   for (const seg of segments) {
-    if (categoryOf(seg.status) === 'In Progress') {
-      const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
-      if (ms > 0) cycleMs += ms;
+    const category = categoryOf(seg.statusId, seg.statusName);
+    const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
+    const counted = category === 'In Progress' && ms > 0;
+    if (counted) cycleMs += ms;
+    if (debug) {
+      segmentLog.push({
+        status: `${seg.statusName} (id=${seg.statusId})`,
+        category,
+        start: seg.start,
+        end: seg.end,
+        days: roundDays(ms),
+        counted,
+      });
     }
+  }
+
+  if (debug) {
+    console.log(`[cycle-time] ${issueKey}: created=${createdAt} resolved=${resolvedAt}`);
+    console.log(`[cycle-time] ${issueKey}: segments=`, JSON.stringify(segmentLog, null, 2));
+    console.log(`[cycle-time] ${issueKey}: cycleTimeDays=${roundDays(cycleMs)} leadTimeDays=${leadTimeDays} reopenCount=${reopenCount}`);
   }
 
   return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount };
@@ -396,11 +457,14 @@ router.post('/sync', async (req, res) => {
       if (needsHistory) {
         const histories = await fetchChangelog(accessToken, cloudId, mapped.issueKey);
         const computed = computeLeadCycleReopen({
+          issueKey: mapped.issueKey,
           createdAt: mapped.createdAt,
           resolvedAt: mapped.resolvedAt,
+          currentStatusId: mapped.statusId,
           currentStatus: mapped.status,
           histories,
           statusCategoryByName,
+          debug: Boolean(process.env.DEBUG_CYCLE_TIME),
         });
         leadTimeDays = computed.leadTimeDays;
         cycleTimeDays = computed.cycleTimeDays;
