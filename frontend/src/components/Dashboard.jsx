@@ -66,7 +66,7 @@ const WIDGET_TITLES = {
   type: 'По типу',
 };
 
-export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, onNavigateToTasks }) {
+export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigateToTasks }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [expandedWidget, setExpandedWidget] = useState(null);
@@ -133,12 +133,6 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
               </button>
             </>
           )}
-          <button
-            onClick={onReset}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            Загрузить другой файл
-          </button>
         </div>
       </div>
 

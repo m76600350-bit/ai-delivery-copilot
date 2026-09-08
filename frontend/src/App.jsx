@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import Upload from './components/Upload.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import JiraPanel from './components/JiraPanel.jsx';
 import FieldMapping from './components/FieldMapping.jsx';
@@ -42,6 +41,15 @@ export default function App() {
       setJiraStatus(status);
 
       if (status.connected) {
+        // The DB already has whatever was last synced — load it straight
+        // away so a page refresh lands on the dashboard, not a connect screen.
+        try {
+          setStats(await getJiraIssues());
+        } catch {
+          // No data yet (first connect, before any sync) — Dashboard's own
+          // sync button covers that; leave stats null.
+        }
+
         try {
           const { mapping } = await getFieldMapping();
           // First time connecting with nothing mapped yet — walk the user
@@ -84,48 +92,70 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const fieldMappingOverlay = showFieldMapping && jiraStatus?.connected && (
+    <FieldMapping
+      onClose={() => setShowFieldMapping(false)}
+      onSaved={() => setShowFieldMapping(false)}
+    />
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       <TopNav activeTab={activeTab} onChangeTab={setActiveTab} />
 
       <main className="p-6">
         {activeTab === 'dashboard' && (
-          !stats ? (
-            <div className="space-y-6">
-              {justConnected && (
-                <div className="max-w-2xl mx-auto bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
-                  <span>Jira успешно подключена</span>
-                  <button
-                    onClick={() => setJustConnected(false)}
-                    className="text-green-600 hover:text-green-800"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-              <JiraPanel
-                status={jiraStatus}
-                onStatusChange={setJiraStatus}
-                onDataLoaded={setStats}
-                onConfigureFields={jiraStatus?.connected ? () => setShowFieldMapping(true) : undefined}
-              />
-              {showFieldMapping && jiraStatus?.connected && (
-                <FieldMapping
-                  onClose={() => setShowFieldMapping(false)}
-                  onSaved={() => setShowFieldMapping(false)}
+          <div className="space-y-6">
+            {justConnected && (
+              <div className="max-w-2xl mx-auto bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
+                <span>Jira успешно подключена</span>
+                <button
+                  onClick={() => setJustConnected(false)}
+                  className="text-green-600 hover:text-green-800"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            {!jiraStatus ? (
+              <p className="text-center text-gray-400 text-sm mt-16">Загрузка...</p>
+            ) : !jiraStatus.connected ? (
+              <>
+                <JiraPanel
+                  status={jiraStatus}
+                  onStatusChange={setJiraStatus}
+                  onDataLoaded={setStats}
+                  onConfigureFields={undefined}
                 />
-              )}
-              <Upload onUploaded={setStats} />
-            </div>
-          ) : (
-            <Dashboard
-              stats={stats}
-              onReset={() => setStats(null)}
-              jiraConnected={jiraStatus?.connected || false}
-              onSyncJira={syncFromJira}
-              onNavigateToTasks={navigateToTasks}
-            />
-          )
+                {fieldMappingOverlay}
+              </>
+            ) : (
+              <>
+                {fieldMappingOverlay}
+                {stats ? (
+                  <Dashboard
+                    stats={stats}
+                    jiraConnected
+                    onSyncJira={syncFromJira}
+                    onNavigateToTasks={navigateToTasks}
+                  />
+                ) : (
+                  <div className="max-w-2xl mx-auto space-y-6">
+                    <p className="text-center text-gray-400 text-sm">
+                      Данных пока нет — синхронизируйте с Jira.
+                    </p>
+                    <JiraPanel
+                      status={jiraStatus}
+                      onStatusChange={setJiraStatus}
+                      onDataLoaded={setStats}
+                      onConfigureFields={() => setShowFieldMapping(true)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {activeTab === 'tasks' && (

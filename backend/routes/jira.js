@@ -668,8 +668,7 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// Returns DB-backed issues in the same shape as POST /api/upload, so the
-// frontend Dashboard can render either source interchangeably.
+// Returns all synced issues from the DB, aggregated for the Dashboard view.
 router.get('/issues', async (req, res) => {
   try {
     await ensureSchema();

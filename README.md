@@ -1,6 +1,6 @@
 # Delivery Dashboard
 
-Дашборд для анализа выгрузок задач из Kaiten/Jira-подобных систем (XLSX).
+Дашборд для анализа задач, синхронизированных из Jira Cloud.
 
 ## Структура
 
@@ -13,7 +13,6 @@ ai-delivery-copilot/
 │   ├── lib/
 │   │   └── jiraAuth.js   # token storage + refresh
 │   └── routes/
-│       ├── upload.js     # POST /api/upload, GET /api/stats
 │       ├── auth.js       # GET /api/auth/login, /api/auth/callback (Jira OAuth)
 │       └── jira.js       # sync/status/issues/fields/field-mapping/tasks
 ├── frontend/           # React + Vite + Tailwind
@@ -26,7 +25,6 @@ ai-delivery-copilot/
 │   │   ├── index.css
 │   │   └── components/
 │   │       ├── TopNav.jsx
-│   │       ├── Upload.jsx
 │   │       ├── Dashboard.jsx
 │   │       ├── WidgetDrilldown.jsx
 │   │       ├── Tasks.jsx
@@ -65,28 +63,8 @@ npm run dev
 
 Приложение поднимется на `http://localhost:3000` (запросы к `/api/*` проксируются на backend).
 
-## API
-
-- `POST /api/upload` — принимает `multipart/form-data` с полем `file` (.xlsx/.xls), парсит его и возвращает статистику.
-- `GET /api/stats` — возвращает статистику последнего загруженного файла.
-
-Ожидаемые колонки в файле: `Код`, `Название`, `Статус`, `Метки`, `Cycle time`, `LT`, `Дата создания`, `Тип`/`Тип задачи`.
-
-Ответ:
-
-```json
-{
-  "total": 123,
-  "byStatus": { "В работе": 10, "Готово": 50 },
-  "byTeam": { "Backend": 30, "Frontend": 20 },
-  "byType": { "Баг": 15, "Фича": 40 },
-  "issues": [ { "code": "...", "name": "...", "status": "...", "labels": "...", "cycleTime": "...", "leadTime": "...", "createdAt": "...", "type": "..." } ]
-}
-```
-
 ## Примечания
 
-- Колонка `Метки` может содержать несколько команд через запятую/точку с запятой — каждая учитывается отдельно в `byTeam`.
 - `frontend/public/index.html` — статический шаблон по требованиям структуры; фактический entry point для Vite — `frontend/index.html`.
 
 ## Деплой backend на Vercel
@@ -94,10 +72,6 @@ npm run dev
 `backend/server.js` экспортирует `app` (Express-приложение), а `app.listen()` вызывается только при локальном запуске (`require.main === module`) — при импорте Vercel как serverless-функции `listen` не выполняется.
 
 `backend/vercel.json` направляет все запросы в `server.js` через `@vercel/node`.
-
-Загрузка файла обрабатывается через `multer.memoryStorage()` — буфер парсится напрямую (`XLSX.read(buffer)`), без записи на диск, так как serverless-окружение либо доступно на запись только в `/tmp`, либо файловая система вообще недоступна между вызовами.
-
-**Ограничение:** `lastStats` для `GET /api/stats` хранится в памяти процесса. На serverless это не гарантированно переживает вызовы — «холодный старт» или другой инстанс не будет видеть данные предыдущей загрузки. Для продакшена лучше передавать данные напрямую в ответе `POST /api/upload` (как уже делает фронтенд) либо вынести хранение в внешнее хранилище (БД, Redis, Vercel KV) — именно это и делает интеграция с Jira ниже.
 
 Настройки в панели Vercel: Root Directory — `backend`, Framework Preset — Other.
 
@@ -113,7 +87,7 @@ npm run dev
    - **Ускорение повторных синков**: changelog запрашивается только для issues, у которых Jira-поле `updated` изменилось с прошлой синхронизации (или для новых) — для остальных `cycle_time`/`lead_time_days`/`reopen_count` просто переносятся из уже сохранённой строки без лишнего похода в Jira.
    - **Прогресс синка** — отдельная таблица `sync_progress` (одна строка, `id = 1`) обновляется после каждой обработанной issue; `GET /api/jira/sync/progress` её читает. Это намеренно через БД, а не in-memory состояние на `/sync` — на Vercel запрос, который поллит прогресс, может попасть на другой инстанс serverless-функции, чем тот, что выполняет сам sync. Фронтенд ([useSyncProgress.js](frontend/src/useSyncProgress.js)) поллит каждые 800 мс, пока идёт синхронизация, и кнопки в [JiraPanel.jsx](frontend/src/components/JiraPanel.jsx) и [Dashboard.jsx](frontend/src/components/Dashboard.jsx) показывают «Синхронизация... получено N из M задач» вместо простого текста.
 3. **Статус** — `GET /api/jira/status` возвращает `{ connected, issueCount, lastSyncedAt }`.
-4. **Данные для дашборда** — `GET /api/jira/issues` отдаёт содержимое таблицы `issues` в том же формате, что и `POST /api/upload` (`total`/`byStatus`/`byTeam`/`byType`/`issues`), плюс `lastSyncedAt` — поэтому `Dashboard.jsx` одинаково рендерит и загруженный XLSX, и данные из БД. Пока Jira подключена (`jiraStatus.connected`, независимо от того, откуда пришли текущие данные на экране), в шапке дашборда рядом с «Загрузить другой файл» показывается кнопка **«Обновить данные из Jira»** — она вызывает тот же `POST /api/jira/sync` → `GET /api/jira/issues`, что и кнопка на стартовом экране, подставляет новые данные без перезагрузки страницы и обновляет отметку времени синхронизации; во время запроса кнопка блокируется и показывает «Синхронизация...». Если Jira не подключена (например, показан только загруженный файл), кнопка не рендерится вовсе.
+4. **Данные для дашборда** — `GET /api/jira/issues` отдаёт содержимое таблицы `issues`, агрегированное для `Dashboard.jsx` (`total`/`byStatus`/`byTeam`/`byType`/`issues`), плюс `lastSyncedAt`. `App.jsx` подгружает эти данные автоматически при каждой загрузке страницы, если Jira подключена — если в БД уже есть данные, дашборд открывается сразу, без промежуточного экрана; если данных ещё нет (первое подключение), показывается приглашение синхронизироваться. Кнопка **«Обновить данные из Jira»** в шапке дашборда вызывает `POST /api/jira/sync` → `GET /api/jira/issues`, подставляет новые данные без перезагрузки страницы и обновляет отметку времени синхронизации; во время запроса кнопка блокируется и показывает прогресс. Рядом — **«Полная пересинхронизация»** (`?force=1`): пересчитывает `lead_time_days`/`cycle_time`/`reopen_count` для всех задач заново, даже если `updated` в Jira не менялся — нужно после изменения логики расчёта на бэкенде, иначе уже засинканные задачи бессрочно отдают старые сохранённые значения.
 5. **Маппинг полей** — id кастомных полей (`customfield_XXXXX`) уникальны для каждого Jira-сайта, поэтому Sprint/Team/Story Points не хардкодятся, а настраиваются через UI:
    - `GET /api/jira/fields` — список всех полей текущего Jira-сайта (`id` + `name`) через `GET /rest/api/3/field`.
    - `GET /api/jira/field-mapping` / `POST /api/jira/field-mapping` — чтение и сохранение соответствия `canonical_field → jira_field_id` в таблице `jira_field_mapping` (ключ — `cloud_id`, так что маппинг привязан к конкретному Jira-сайту).
