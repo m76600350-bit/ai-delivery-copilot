@@ -89,9 +89,17 @@ function extractFieldValue(rawValue) {
   return String(rawValue);
 }
 
+// The three category *names* ("To Do"/"In Progress"/"Done") are localized
+// to the requesting user same as status names are — a Russian site returns
+// "К выполнению"/"В работе"/"Готово" here too. `key` is the one thing Jira
+// never translates: always exactly "new"/"indeterminate"/"done" regardless
+// of site language, so every category comparison in this file is on key,
+// never name. `status_category` is stored as this key throughout.
+const CATEGORY_KEY = { NEW: 'new', IN_PROGRESS: 'indeterminate', DONE: 'done' };
+
 function mapJiraFields(issue, fieldMapping) {
   const f = issue.fields || {};
-  const statusCategory = f.status?.statusCategory?.name || null;
+  const statusCategory = f.status?.statusCategory?.key || null;
 
   const sprint = fieldMapping.sprint ? extractFieldValue(f[fieldMapping.sprint]) : null;
   const mappedTeam = fieldMapping.team ? extractFieldValue(f[fieldMapping.team]) : null;
@@ -118,7 +126,7 @@ function mapJiraFields(issue, fieldMapping) {
     team: mappedTeam,
     createdAt: f.created || null,
     updatedAt: f.updated || null,
-    startedAt: statusCategory && statusCategory !== 'To Do' ? f.created : null,
+    startedAt: statusCategory && statusCategory !== CATEGORY_KEY.NEW ? f.created : null,
     // The real resolution timestamp, not a heuristic — used as-is for
     // lead time and as the right edge of the cycle-time status timeline.
     resolvedAt: f.resolutiondate || null,
@@ -129,17 +137,19 @@ function mapJiraFields(issue, fieldMapping) {
 }
 
 // Site-wide status list (id/name/statusCategory), used to classify each
-// *historical* status from the changelog into "To Do"/"In Progress"/"Done".
+// *historical* status from the changelog into a category key.
 //
 // Keyed primarily by id, not name: the changelog's fromString/toString are
 // Jira's *default* (English) status names regardless of the account's
 // display locale, while this endpoint (like the issue search API) returns
 // names localized to the requesting user — so on a non-English site
 // "In Progress" from the changelog would never match a name-keyed map built
-// from "В работе" here, silently zeroing out every cycle-time segment. The
-// id space is locale-independent and shared between both endpoints, so it's
-// the only reliable join key; byName is kept only as a defensive fallback
-// for the rare changelog entry that might lack an id.
+// from "В работе" here. The id space is locale-independent and shared
+// between both endpoints, so it's the only reliable join key; byName is
+// kept only as a defensive fallback for a changelog entry missing an id.
+// The category value itself is `.key` (see CATEGORY_KEY above) — `.name` is
+// localized too ("Готово" instead of "Done"), which was a second instance
+// of the exact same bug caught only by testing against a real Jira site.
 async function fetchStatusCategoryMap(accessToken, cloudId) {
   const res = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/status`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
@@ -153,7 +163,7 @@ async function fetchStatusCategoryMap(accessToken, cloudId) {
   const byId = {};
   const byName = {};
   for (const s of statuses) {
-    const category = s.statusCategory?.name || null;
+    const category = s.statusCategory?.key || null;
     if (s.id != null) byId[String(s.id)] = category;
     if (s.name) byName[s.name] = category;
   }
@@ -255,7 +265,7 @@ function computeLeadCycleReopen({
 
   let reopenCount = 0;
   for (const ev of statusEvents) {
-    if (categoryOf(ev.fromId, ev.fromName) === 'Done' && categoryOf(ev.toId, ev.toName) !== 'Done') {
+    if (categoryOf(ev.fromId, ev.fromName) === CATEGORY_KEY.DONE && categoryOf(ev.toId, ev.toName) !== CATEGORY_KEY.DONE) {
       reopenCount += 1;
     }
   }
@@ -291,7 +301,7 @@ function computeLeadCycleReopen({
   for (const seg of segments) {
     const category = categoryOf(seg.statusId, seg.statusName);
     const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
-    const counted = category === 'In Progress' && ms > 0;
+    const counted = category === CATEGORY_KEY.IN_PROGRESS && ms > 0;
     if (counted) cycleMs += ms;
     if (debug) {
       segmentLog.push({
@@ -605,7 +615,12 @@ router.get('/debug/:issueKey/changelog', async (req, res) => {
       issueKey,
       created: f.created,
       resolutiondate: f.resolutiondate || null,
-      currentStatus: { id: f.status?.id, name: f.status?.name, category: f.status?.statusCategory?.name },
+      currentStatus: {
+        id: f.status?.id,
+        name: f.status?.name,
+        categoryName: f.status?.statusCategory?.name,
+        categoryKey: f.status?.statusCategory?.key,
+      },
       rawStatusEvents: statusEvents,
       statusCategoryMap: statusCategoryByName,
       computed,
@@ -745,7 +760,7 @@ function buildTaskFilters(query) {
   return { where: conditions.join(' AND '), params };
 }
 
-const FINAL_STATUS_CATEGORY = 'Done';
+const FINAL_STATUS_CATEGORY = CATEGORY_KEY.DONE;
 
 function withDaysInStatus(row) {
   const daysInStatus =
