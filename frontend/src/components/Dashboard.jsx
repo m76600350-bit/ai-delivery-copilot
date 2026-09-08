@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import WidgetDrilldown from './WidgetDrilldown.jsx';
 
 function StatCard({ title, value }) {
@@ -58,9 +58,6 @@ const WIDGET_TITLES = {
 };
 
 export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, onNavigateToTasks }) {
-  const [statusFilter, setStatusFilter] = useState('');
-  const [teamFilter, setTeamFilter] = useState('');
-  const [search, setSearch] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [expandedWidget, setExpandedWidget] = useState(null);
@@ -76,22 +73,6 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
       setIsSyncing(false);
     }
   };
-
-  const statuses = useMemo(() => Object.keys(stats.byStatus || {}), [stats]);
-  const teams = useMemo(() => Object.keys(stats.byTeam || {}), [stats]);
-
-  const filteredIssues = useMemo(() => {
-    return (stats.issues || []).filter((issue) => {
-      if (statusFilter && issue.status !== statusFilter) return false;
-      if (teamFilter && !String(issue.labels).includes(teamFilter)) return false;
-      if (
-        search &&
-        !`${issue.code} ${issue.name}`.toLowerCase().includes(search.toLowerCase())
-      )
-        return false;
-      return true;
-    });
-  }, [stats.issues, statusFilter, teamFilter, search]);
 
   // Every hook above must run on every render regardless of this branch —
   // an early return before them would violate the Rules of Hooks and throw
@@ -156,78 +137,6 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
         <BreakdownCard title="По статусу" data={stats.byStatus} onExpand={() => setExpandedWidget('status')} />
         <BreakdownCard title="По команде" data={stats.byTeam} onExpand={() => setExpandedWidget('team')} />
         <BreakdownCard title="По типу" data={stats.byType} onExpand={() => setExpandedWidget('type')} />
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-        <div className="flex flex-wrap gap-3 mb-4">
-          <input
-            type="text"
-            placeholder="Поиск по коду/названию..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-1.5 text-sm flex-1 min-w-[200px]"
-          />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-          >
-            <option value="">Все статусы</option>
-            {statuses.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <select
-            value={teamFilter}
-            onChange={(e) => setTeamFilter(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-          >
-            <option value="">Все команды</option>
-            {teams.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 border-b border-gray-200">
-                <th className="py-2 pr-4">Код</th>
-                <th className="py-2 pr-4">Название</th>
-                <th className="py-2 pr-4">Статус</th>
-                <th className="py-2 pr-4">Команда</th>
-                <th className="py-2 pr-4">Тип</th>
-                <th className="py-2 pr-4">Cycle time</th>
-                <th className="py-2 pr-4">LT</th>
-                <th className="py-2 pr-4">Дата создания</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredIssues.map((issue, idx) => (
-                <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.code}</td>
-                  <td className="py-2 pr-4">{issue.name}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.status}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.labels}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.type}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.cycleTime}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.leadTime}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{issue.createdAt}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredIssues.length === 0 && (
-            <p className="text-center text-gray-400 text-sm py-6">
-              Ничего не найдено
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );
