@@ -565,6 +565,59 @@ router.get('/sync/progress', async (req, res) => {
   }
 });
 
+// GET /api/jira/debug/:issueKey/changelog — raw changelog + the exact
+// segments computeLeadCycleReopen builds from it, for diagnosing a wrong
+// cycle time on a real site without needing Vercel log access.
+router.get('/debug/:issueKey/changelog', async (req, res) => {
+  try {
+    const { accessToken, cloudId } = await getValidAccessToken();
+    const { issueKey } = req.params;
+
+    const issueRes = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/issue/${issueKey}?fields=created,resolutiondate,status`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+    if (!issueRes.ok) {
+      return res.status(502).json({ error: `Failed to fetch issue: ${issueRes.status} ${await issueRes.text()}` });
+    }
+    const issue = await issueRes.json();
+    const f = issue.fields || {};
+
+    const histories = await fetchChangelog(accessToken, cloudId, issueKey);
+    const statusCategoryByName = await fetchStatusCategoryMap(accessToken, cloudId);
+
+    const statusEvents = histories
+      .filter((h) => Array.isArray(h.items) && h.created)
+      .flatMap((h) => h.items.filter((item) => item.field === 'status').map((item) => ({ time: h.created, ...item })));
+
+    const computed = computeLeadCycleReopen({
+      issueKey,
+      createdAt: f.created,
+      resolvedAt: f.resolutiondate || null,
+      currentStatusId: f.status?.id || null,
+      currentStatus: f.status?.name || null,
+      histories,
+      statusCategoryByName,
+      debug: false,
+    });
+
+    res.json({
+      issueKey,
+      created: f.created,
+      resolutiondate: f.resolutiondate || null,
+      currentStatus: { id: f.status?.id, name: f.status?.name, category: f.status?.statusCategory?.name },
+      rawStatusEvents: statusEvents,
+      statusCategoryMap: statusCategoryByName,
+      computed,
+    });
+  } catch (err) {
+    if (err.code === 'NOT_CONNECTED') {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/status', async (req, res) => {
   try {
     await ensureSchema();
