@@ -417,6 +417,12 @@ async function setSyncProgress(pool, patch) {
 
 router.post('/sync', async (req, res) => {
   const pool = getPool();
+  // Bypasses the "skip changelog if Jira's updated timestamp is unchanged"
+  // optimization below, forcing every issue's lead/cycle/reopen to be
+  // recomputed — needed after fixing a bug in that calculation itself,
+  // since otherwise already-synced issues keep their stale stored values
+  // forever (their `updated` in Jira never changes just because our code did).
+  const force = req.query.force === '1' || req.body?.force === true;
   try {
     await ensureSchema();
     const { accessToken, cloudId } = await getValidAccessToken();
@@ -458,7 +464,7 @@ router.post('/sync', async (req, res) => {
       // time, cycle time, or reopen count can have happened in that case.
       const existingUpdatedAt = existing?.updated_at ? new Date(existing.updated_at).getTime() : null;
       const newUpdatedAt = mapped.updatedAt ? new Date(mapped.updatedAt).getTime() : null;
-      const needsHistory = !existing || existingUpdatedAt !== newUpdatedAt;
+      const needsHistory = force || !existing || existingUpdatedAt !== newUpdatedAt;
 
       let leadTimeDays = existing?.lead_time_days ?? null;
       let cycleTimeDays = existing?.cycle_time ?? null;
