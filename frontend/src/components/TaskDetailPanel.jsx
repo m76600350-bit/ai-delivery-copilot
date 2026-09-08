@@ -58,7 +58,9 @@ export default function TaskDetailPanel({ task, siteUrl, onClose }) {
           <Field label="Спринт">{task.sprint}</Field>
           <Field label="Story Points">{task.storyPoints}</Field>
           <Field label="Дней в статусе">{task.daysInStatus == null ? '—' : `${task.daysInStatus} д`}</Field>
-          <Field label="Cycle time">{task.cycleTime == null ? '—' : `${task.cycleTime} д`}</Field>
+          <Field label="Cycle time">{task.cycleTime == null ? '—' : `${task.cycleTime} дн`}</Field>
+          <Field label="Lead time">{task.leadTimeDays == null ? '—' : `${task.leadTimeDays} дн`}</Field>
+          <Field label="Возвратов из Done">{task.reopenCount ?? 0}</Field>
           <Field label="Метки">{task.labels || '—'}</Field>
         </div>
 

@@ -44,6 +44,8 @@ async function ensureSchema() {
         started_at TIMESTAMPTZ,
         resolved_at TIMESTAMPTZ,
         cycle_time NUMERIC,
+        lead_time_days NUMERIC,
+        reopen_count INTEGER NOT NULL DEFAULT 0,
         sprint TEXT,
         story_points NUMERIC,
         labels TEXT,
@@ -73,8 +75,26 @@ async function ensureSchema() {
         UNIQUE (cloud_id, canonical_field)
       );
 
+      -- Single-row table (id always 1) tracking the currently running (or
+      -- most recently finished) sync, so a separate request can poll it for
+      -- progress while POST /api/jira/sync is still in flight — the two
+      -- requests may land on different serverless invocations, so this has
+      -- to live in the DB rather than in-process memory.
+      CREATE TABLE IF NOT EXISTS sync_progress (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'idle',
+        total INTEGER NOT NULL DEFAULT 0,
+        completed INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        CONSTRAINT sync_progress_singleton CHECK (id = 1)
+      );
+
       -- Backfills columns on tables created before they existed.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
+      ALTER TABLE issues ADD COLUMN IF NOT EXISTS lead_time_days NUMERIC;
+      ALTER TABLE issues ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE jira_tokens ADD COLUMN IF NOT EXISTS site_url TEXT;
     `).then(() => true).catch((err) => {
       schemaReady = null;

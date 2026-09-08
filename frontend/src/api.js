@@ -57,4 +57,9 @@ export async function exportTasksCsv(params) {
   return res.data;
 }
 
+export async function getSyncProgress() {
+  const res = await api.get('/jira/sync/progress');
+  return res.data;
+}
+
 export default api;

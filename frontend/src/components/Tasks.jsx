@@ -4,6 +4,10 @@ import StatusBadge from './StatusBadge.jsx';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
 
+function formatDays(value) {
+  return value == null ? '—' : `${value} дн`;
+}
+
 function useDebouncedValue(value, delayMs) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -161,6 +165,8 @@ export default function Tasks({ jiraConnected, initialFilters }) {
                 <th className="py-2 px-4">Статус</th>
                 <th className="py-2 px-4">Приоритет</th>
                 <th className="py-2 px-4">Дней в статусе</th>
+                <th className="py-2 px-4">Cycle time</th>
+                <th className="py-2 px-4">LT</th>
                 <th className="py-2 px-4">Story Points</th>
                 <th className="py-2 px-4">Спринт</th>
               </tr>
@@ -182,6 +188,8 @@ export default function Tasks({ jiraConnected, initialFilters }) {
                   </td>
                   <td className="py-2 px-4 whitespace-nowrap">{task.priority}</td>
                   <td className="py-2 px-4 whitespace-nowrap">{task.daysInStatus == null ? '—' : `${task.daysInStatus} д`}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.cycleTime)}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.leadTimeDays)}</td>
                   <td className="py-2 px-4 whitespace-nowrap">{task.storyPoints ?? '—'}</td>
                   <td className="py-2 px-4 whitespace-nowrap">{task.sprint || '—'}</td>
                 </tr>

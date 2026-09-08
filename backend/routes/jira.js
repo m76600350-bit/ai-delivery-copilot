@@ -5,7 +5,7 @@ const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/j
 const router = express.Router();
 
 const JQL = 'project = SCRUM ORDER BY updated DESC';
-const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'issuetype', 'project'];
+const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'resolutiondate', 'issuetype', 'project'];
 
 // Internal field names the app understands; each can be pointed at a
 // Jira custom field id via jira_field_mapping since those ids are
@@ -113,19 +113,144 @@ function mapJiraFields(issue, fieldMapping) {
     createdAt: f.created || null,
     updatedAt: f.updated || null,
     startedAt: statusCategory && statusCategory !== 'To Do' ? f.created : null,
-    resolvedAt: statusCategory === 'Done' ? f.updated : null,
+    // The real resolution timestamp, not a heuristic — used as-is for
+    // lead time and as the right edge of the cycle-time status timeline.
+    resolvedAt: f.resolutiondate || null,
     sprint,
     storyPoints: Number.isFinite(storyPoints) ? storyPoints : null,
     labels: Array.isArray(f.labels) ? f.labels.join(', ') : '',
   };
 }
 
-function computeCycleTime(startedAt, resolvedAt) {
-  if (!startedAt || !resolvedAt) return null;
-  const start = new Date(startedAt).getTime();
-  const end = new Date(resolvedAt).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
-  return Math.round(((end - start) / (1000 * 60 * 60 * 24)) * 100) / 100;
+// Site-wide status list (id/name/statusCategory), used to classify each
+// *historical* status name from the changelog into "To Do"/"In Progress"/
+// "Done" — the changelog only gives us status names (fromString/toString),
+// not categories, and a status's category can't be inferred from its name.
+async function fetchStatusCategoryMap(accessToken, cloudId) {
+  const res = await fetch(`${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/status`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to list Jira statuses: ${res.status} ${await res.text()}`);
+  }
+
+  const statuses = await res.json();
+  const map = {};
+  for (const s of statuses) {
+    if (s.name) map[s.name] = s.statusCategory?.name || null;
+  }
+  return map;
+}
+
+// Atlassian's own docs/community reports disagree on the exact envelope of
+// GET /rest/api/3/issue/{id}/changelog — some show offset paging
+// (startAt/maxResults/total), others token-based (nextPageToken/isLast),
+// and the entry array itself is described as both `values` and `histories`
+// depending on the source. This handles either shape rather than betting on
+// one, since there's no way to verify against a real Jira site here.
+async function fetchChangelog(accessToken, cloudId, issueIdOrKey) {
+  const histories = [];
+  let nextPageToken;
+  let startAt = 0;
+  const maxResults = 100;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const params = new URLSearchParams({ maxResults: String(maxResults) });
+    if (nextPageToken) params.set('nextPageToken', nextPageToken);
+    else if (startAt) params.set('startAt', String(startAt));
+
+    const res = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/issue/${issueIdOrKey}/changelog?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch changelog for ${issueIdOrKey}: ${res.status} ${await res.text()}`);
+    }
+
+    const data = await res.json();
+    const page = data.values || data.histories || [];
+    histories.push(...page);
+
+    if (page.length === 0 || data.isLast === true) break;
+
+    if (data.nextPageToken) {
+      nextPageToken = data.nextPageToken;
+      continue;
+    }
+
+    // Offset-paged shape: keep going while more pages remain by count; if
+    // neither a token nor a total is present, there's no reliable signal
+    // for more pages, so stop rather than loop forever.
+    startAt += page.length;
+    if (typeof data.total !== 'number' || startAt >= data.total) break;
+  }
+
+  return histories;
+}
+
+function roundDays(ms) {
+  return Math.round((ms / 86400000) * 100) / 100;
+}
+
+// Cycle time = total time spent in "In Progress"-category statuses, summed
+// across every such period (so a reopened-then-restarted issue counts both
+// stretches) — computed by replaying the changelog's status transitions
+// into a chronological timeline of status segments from creation to
+// resolution. Lead time is the simple created→resolved span. Both are null
+// for unresolved issues; reopen_count (Done → not-Done) is tracked
+// regardless of current resolution state since it's a historical fact.
+function computeLeadCycleReopen({ createdAt, resolvedAt, currentStatus, histories, statusCategoryByName }) {
+  const categoryOf = (name) => (name == null ? null : statusCategoryByName[name] ?? null);
+
+  const statusEvents = histories
+    .filter((h) => Array.isArray(h.items) && h.created)
+    .flatMap((h) =>
+      h.items
+        .filter((item) => item.field === 'status')
+        .map((item) => ({ time: h.created, from: item.fromString, to: item.toString }))
+    )
+    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+  let reopenCount = 0;
+  for (const ev of statusEvents) {
+    if (categoryOf(ev.from) === 'Done' && categoryOf(ev.to) !== 'Done') {
+      reopenCount += 1;
+    }
+  }
+
+  const leadTimeDays =
+    createdAt && resolvedAt
+      ? roundDays(new Date(resolvedAt).getTime() - new Date(createdAt).getTime())
+      : null;
+
+  if (!resolvedAt) {
+    return { leadTimeDays: null, cycleTimeDays: null, reopenCount };
+  }
+
+  // Replay transitions into contiguous [status, start, end) segments.
+  const segments = [];
+  let segStart = createdAt;
+  let segStatus = statusEvents.length ? statusEvents[0].from : currentStatus;
+
+  for (const ev of statusEvents) {
+    segments.push({ status: segStatus, start: segStart, end: ev.time });
+    segStart = ev.time;
+    segStatus = ev.to;
+  }
+  segments.push({ status: segStatus, start: segStart, end: resolvedAt });
+
+  let cycleMs = 0;
+  for (const seg of segments) {
+    if (categoryOf(seg.status) === 'In Progress') {
+      const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
+      if (ms > 0) cycleMs += ms;
+    }
+  }
+
+  return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount };
 }
 
 // GET /api/jira/fields — lists every field on the connected Jira site
@@ -201,7 +326,26 @@ router.post('/field-mapping', async (req, res) => {
   }
 });
 
+// Upserts only the given fields into the singleton sync_progress row.
+// Column defaults cover any field a partial patch omits, so this is safe to
+// call with {completed} alone even if (in principle) no row exists yet.
+async function setSyncProgress(pool, patch) {
+  const fields = Object.keys(patch);
+  const values = Object.values(patch);
+  const insertCols = ['id', ...fields].join(', ');
+  const insertPlaceholders = ['1', ...fields.map((_, i) => `$${i + 1}`)].join(', ');
+  const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+
+  await pool.query(
+    `INSERT INTO sync_progress (${insertCols})
+     VALUES (${insertPlaceholders})
+     ON CONFLICT (id) DO UPDATE SET ${setClause}`,
+    values
+  );
+}
+
 router.post('/sync', async (req, res) => {
+  const pool = getPool();
   try {
     await ensureSchema();
     const { accessToken, cloudId } = await getValidAccessToken();
@@ -213,66 +357,109 @@ router.post('/sync', async (req, res) => {
     const fields = [...new Set([...BASE_FIELDS, ...extraFields])];
 
     const rawIssues = await fetchAllIssues(accessToken, cloudId, fields);
-    const pool = getPool();
+    const statusCategoryByName = await fetchStatusCategoryMap(accessToken, cloudId);
+
+    await setSyncProgress(pool, {
+      status: 'running',
+      total: rawIssues.length,
+      completed: 0,
+      error: null,
+      started_at: new Date(),
+      finished_at: null,
+    });
 
     let createdCount = 0;
     let updatedCount = 0;
+    let completed = 0;
 
     for (const raw of rawIssues) {
       const mapped = mapJiraFields(raw, fieldMapping);
       if (!mapped.team) {
         mapped.team = mapped.labels || null;
       }
-      const cycleTime = computeCycleTime(mapped.startedAt, mapped.resolvedAt);
 
       const { rows } = await pool.query('SELECT * FROM issues WHERE issue_key = $1', [mapped.issueKey]);
       const existing = rows[0];
+
+      // The changelog fetch is what makes sync slow (one extra Jira request
+      // per issue), so it's skipped whenever Jira's own `updated` timestamp
+      // hasn't moved since the last sync — nothing that could affect lead
+      // time, cycle time, or reopen count can have happened in that case.
+      const existingUpdatedAt = existing?.updated_at ? new Date(existing.updated_at).getTime() : null;
+      const newUpdatedAt = mapped.updatedAt ? new Date(mapped.updatedAt).getTime() : null;
+      const needsHistory = !existing || existingUpdatedAt !== newUpdatedAt;
+
+      let leadTimeDays = existing?.lead_time_days ?? null;
+      let cycleTimeDays = existing?.cycle_time ?? null;
+      let reopenCount = existing?.reopen_count ?? 0;
+
+      if (needsHistory) {
+        const histories = await fetchChangelog(accessToken, cloudId, mapped.issueKey);
+        const computed = computeLeadCycleReopen({
+          createdAt: mapped.createdAt,
+          resolvedAt: mapped.resolvedAt,
+          currentStatus: mapped.status,
+          histories,
+          statusCategoryByName,
+        });
+        leadTimeDays = computed.leadTimeDays;
+        cycleTimeDays = computed.cycleTimeDays;
+        reopenCount = computed.reopenCount;
+      }
 
       if (!existing) {
         await pool.query(
           `INSERT INTO issues (
              issue_key, project, issue_type, summary, status, status_category,
              priority, assignee, team, created_at, updated_at, started_at,
-             resolved_at, cycle_time, sprint, story_points, labels, last_synced_at, is_deleted
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now(), false)`,
+             resolved_at, cycle_time, lead_time_days, reopen_count, sprint,
+             story_points, labels, last_synced_at, is_deleted
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now(), false)`,
           [
             mapped.issueKey, mapped.project, mapped.issueType, mapped.summary,
             mapped.status, mapped.statusCategory, mapped.priority, mapped.assignee,
             mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
-            mapped.resolvedAt, cycleTime, mapped.sprint, mapped.storyPoints, mapped.labels,
+            mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
+            mapped.storyPoints, mapped.labels,
           ]
         );
         createdCount += 1;
-        continue;
-      }
-
-      // Diff tracked fields against the stored row and log each change
-      // before overwriting it, so issue_history captures the transition.
-      for (const field of TRACKED_FIELDS) {
-        const oldValue = existing[field] == null ? null : String(existing[field]);
-        const newValue = mapped[field] == null ? null : String(mapped[field]);
-        if (oldValue !== newValue) {
-          await pool.query(
-            `INSERT INTO issue_history (issue_id, field, old_value, new_value) VALUES ($1, $2, $3, $4)`,
-            [existing.id, field, oldValue, newValue]
-          );
+      } else {
+        // Diff tracked fields against the stored row and log each change
+        // before overwriting it, so issue_history captures the transition.
+        for (const field of TRACKED_FIELDS) {
+          const oldValue = existing[field] == null ? null : String(existing[field]);
+          const newValue = mapped[field] == null ? null : String(mapped[field]);
+          if (oldValue !== newValue) {
+            await pool.query(
+              `INSERT INTO issue_history (issue_id, field, old_value, new_value) VALUES ($1, $2, $3, $4)`,
+              [existing.id, field, oldValue, newValue]
+            );
+          }
         }
+
+        await pool.query(
+          `UPDATE issues SET
+             project = $1, issue_type = $2, summary = $3, status = $4, status_category = $5,
+             priority = $6, assignee = $7, team = $8, created_at = $9, updated_at = $10, started_at = $11,
+             resolved_at = $12, cycle_time = $13, lead_time_days = $14, reopen_count = $15, sprint = $16,
+             story_points = $17, labels = $18, last_synced_at = now()
+           WHERE id = $19`,
+          [
+            mapped.project, mapped.issueType, mapped.summary, mapped.status, mapped.statusCategory,
+            mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
+            mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
+            mapped.storyPoints, mapped.labels, existing.id,
+          ]
+        );
+        updatedCount += 1;
       }
 
-      await pool.query(
-        `UPDATE issues SET
-           project = $1, issue_type = $2, summary = $3, status = $4, status_category = $5,
-           priority = $6, assignee = $7, team = $8, created_at = $9, updated_at = $10, started_at = $11,
-           resolved_at = $12, cycle_time = $13, sprint = $14, story_points = $15, labels = $16, last_synced_at = now()
-         WHERE id = $17`,
-        [
-          mapped.project, mapped.issueType, mapped.summary, mapped.status, mapped.statusCategory,
-          mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
-          mapped.resolvedAt, cycleTime, mapped.sprint, mapped.storyPoints, mapped.labels, existing.id,
-        ]
-      );
-      updatedCount += 1;
+      completed += 1;
+      await setSyncProgress(pool, { completed });
     }
+
+    await setSyncProgress(pool, { status: 'done', finished_at: new Date() });
 
     res.json({
       total: rawIssues.length,
@@ -281,9 +468,35 @@ router.post('/sync', async (req, res) => {
       fieldMappingConfigured: extraFields.length > 0,
     });
   } catch (err) {
+    await setSyncProgress(pool, { status: 'error', error: err.message, finished_at: new Date() }).catch(() => {});
+
     if (err.code === 'NOT_CONNECTED') {
       return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
     }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/sync/progress — polled by the frontend while a sync is in
+// flight (a separate request may land on a different serverless instance,
+// so progress can't just live in memory on the /sync handler).
+router.get('/sync/progress', async (req, res) => {
+  try {
+    await ensureSchema();
+    const { rows } = await getPool().query('SELECT * FROM sync_progress WHERE id = 1');
+    const row = rows[0];
+    if (!row) {
+      return res.json({ status: 'idle', total: 0, completed: 0 });
+    }
+    res.json({
+      status: row.status,
+      total: row.total,
+      completed: row.completed,
+      error: row.error,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+    });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -347,7 +560,8 @@ router.get('/issues', async (req, res) => {
         labels: row.labels,
         team: row.team,
         cycleTime: row.cycle_time,
-        leadTime: '',
+        leadTime: row.lead_time_days,
+        reopenCount: row.reopen_count,
         createdAt: row.created_at,
         type: row.issue_type,
         sprint: row.sprint,
@@ -438,6 +652,8 @@ function withDaysInStatus(row) {
     startedAt: row.started_at,
     resolvedAt: row.resolved_at,
     cycleTime: row.cycle_time,
+    leadTimeDays: row.lead_time_days,
+    reopenCount: row.reopen_count,
     sprint: row.sprint,
     storyPoints: row.story_points,
     labels: row.labels,
@@ -457,6 +673,7 @@ const TASK_LIST_SELECT = `
     assignee,
     COALESCE(team, 'Без команды') AS team,
     created_at, updated_at, started_at, resolved_at, cycle_time,
+    lead_time_days, reopen_count,
     sprint, story_points, labels, last_synced_at
   FROM issues
 `;
@@ -476,6 +693,8 @@ const CSV_COLUMNS = [
   ['Статус', (t) => t.status],
   ['Приоритет', (t) => t.priority],
   ['Дней в статусе', (t) => (t.daysInStatus == null ? '' : t.daysInStatus)],
+  ['Cycle time', (t) => (t.cycleTime == null ? '' : t.cycleTime)],
+  ['Lead time', (t) => (t.leadTimeDays == null ? '' : t.leadTimeDays)],
   ['Story Points', (t) => (t.storyPoints == null ? '' : t.storyPoints)],
   ['Спринт', (t) => t.sprint || ''],
 ];

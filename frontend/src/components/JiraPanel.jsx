@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { jiraLoginUrl, syncJira, getJiraIssues } from '../api.js';
+import useSyncProgress from '../useSyncProgress.js';
 
 function formatDate(value) {
   if (!value) return null;
   return new Date(value).toLocaleString('ru-RU');
 }
 
+function syncButtonLabel(isSyncing, progress) {
+  if (!isSyncing) return 'Синхронизировать данные из Jira';
+  if (progress && progress.total > 0) {
+    return `Синхронизация... получено ${progress.completed} из ${progress.total} задач`;
+  }
+  return 'Синхронизация...';
+}
+
 export default function JiraPanel({ status, onStatusChange, onDataLoaded, onConfigureFields }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState(null);
+  const progress = useSyncProgress(isSyncing);
 
   if (!status) return null;
 
@@ -66,7 +76,7 @@ export default function JiraPanel({ status, onStatusChange, onDataLoaded, onConf
               disabled={isSyncing}
               className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {isSyncing ? 'Синхронизация...' : 'Синхронизировать данные из Jira'}
+              {syncButtonLabel(isSyncing, progress)}
             </button>
             {status.issueCount > 0 && (
               <button

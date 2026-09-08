@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
 import WidgetDrilldown from './WidgetDrilldown.jsx';
+import useSyncProgress from '../useSyncProgress.js';
+
+function syncButtonLabel(isSyncing, progress) {
+  if (!isSyncing) return 'Обновить данные из Jira';
+  if (progress && progress.total > 0) {
+    return `Синхронизация... получено ${progress.completed} из ${progress.total} задач`;
+  }
+  return 'Синхронизация...';
+}
 
 function StatCard({ title, value }) {
   return (
@@ -61,6 +70,7 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [expandedWidget, setExpandedWidget] = useState(null);
+  const syncProgress = useSyncProgress(isSyncing);
 
   const handleSyncJira = async () => {
     setIsSyncing(true);
@@ -110,7 +120,7 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
               disabled={isSyncing}
               className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {isSyncing ? 'Синхронизация...' : 'Обновить данные из Jira'}
+              {syncButtonLabel(isSyncing, syncProgress)}
             </button>
           )}
           <button
