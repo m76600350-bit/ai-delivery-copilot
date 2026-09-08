@@ -13,14 +13,27 @@ function useDebouncedValue(value, delayMs) {
   return debounced;
 }
 
-export default function Tasks({ jiraConnected }) {
+export default function Tasks({ jiraConnected, initialFilters }) {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
 
-  const [statusFilter, setStatusFilter] = useState([]);
-  const [teamFilter, setTeamFilter] = useState([]);
-  const [typeFilter, setTypeFilter] = useState([]);
-  const [priorityFilter, setPriorityFilter] = useState([]);
+  const [statusFilter, setStatusFilter] = useState(initialFilters?.status || []);
+  const [teamFilter, setTeamFilter] = useState(initialFilters?.team || []);
+  const [typeFilter, setTypeFilter] = useState(initialFilters?.type || []);
+  const [priorityFilter, setPriorityFilter] = useState(initialFilters?.priority || []);
+
+  // A dashboard widget's drill-down click passes a new initialFilters object
+  // (App.jsx) — apply it whenever that identity changes, overriding whatever
+  // the user had set locally, since arriving here is itself a filter action.
+  useEffect(() => {
+    if (!initialFilters) return;
+    setSearch('');
+    setStatusFilter(initialFilters.status || []);
+    setTeamFilter(initialFilters.team || []);
+    setTypeFilter(initialFilters.type || []);
+    setPriorityFilter(initialFilters.priority || []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFilters]);
 
   const [filterOptions, setFilterOptions] = useState({ statuses: [], teams: [], types: [], priorities: [] });
   const [page, setPage] = useState(1);

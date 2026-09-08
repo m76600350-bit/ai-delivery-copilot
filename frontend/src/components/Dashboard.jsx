@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import WidgetDrilldown from './WidgetDrilldown.jsx';
 
 function StatCard({ title, value }) {
   return (
@@ -9,13 +10,24 @@ function StatCard({ title, value }) {
   );
 }
 
-function BreakdownCard({ title, data }) {
+function BreakdownCard({ title, data, onExpand }) {
   const entries = Object.entries(data || {}).sort((a, b) => b[1] - a[1]);
   const max = entries.length ? entries[0][1] : 1;
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-      <p className="text-sm font-medium text-gray-700 mb-3">{title}</p>
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm font-medium text-gray-700">{title}</p>
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            title="Развернуть на весь экран"
+            className="text-gray-400 hover:text-gray-700 text-sm leading-none"
+          >
+            ⛶
+          </button>
+        )}
+      </div>
       <div className="space-y-2">
         {entries.map(([key, count]) => (
           <div key={key}>
@@ -39,12 +51,19 @@ function BreakdownCard({ title, data }) {
   );
 }
 
-export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira }) {
+const WIDGET_TITLES = {
+  status: 'По статусу',
+  team: 'По команде',
+  type: 'По типу',
+};
+
+export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, onNavigateToTasks }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [teamFilter, setTeamFilter] = useState('');
   const [search, setSearch] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
+  const [expandedWidget, setExpandedWidget] = useState(null);
 
   const handleSyncJira = async () => {
     setIsSyncing(true);
@@ -73,6 +92,24 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira })
       return true;
     });
   }, [stats.issues, statusFilter, teamFilter, search]);
+
+  // Every hook above must run on every render regardless of this branch —
+  // an early return before them would violate the Rules of Hooks and throw
+  // "Rendered fewer hooks than expected" the moment a widget is expanded.
+  if (expandedWidget) {
+    return (
+      <WidgetDrilldown
+        dimension={expandedWidget}
+        title={WIDGET_TITLES[expandedWidget]}
+        issues={stats.issues || []}
+        onBack={() => setExpandedWidget(null)}
+        onNavigateToTasks={(filters) => {
+          setExpandedWidget(null);
+          onNavigateToTasks?.(filters);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -116,9 +153,9 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira })
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <BreakdownCard title="По статусу" data={stats.byStatus} />
-        <BreakdownCard title="По команде" data={stats.byTeam} />
-        <BreakdownCard title="По типу" data={stats.byType} />
+        <BreakdownCard title="По статусу" data={stats.byStatus} onExpand={() => setExpandedWidget('status')} />
+        <BreakdownCard title="По команде" data={stats.byTeam} onExpand={() => setExpandedWidget('team')} />
+        <BreakdownCard title="По типу" data={stats.byType} onExpand={() => setExpandedWidget('type')} />
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">

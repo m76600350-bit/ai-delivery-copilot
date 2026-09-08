@@ -345,6 +345,7 @@ router.get('/issues', async (req, res) => {
         name: row.summary,
         status: row.status,
         labels: row.labels,
+        team: row.team,
         cycleTime: row.cycle_time,
         leadTime: '',
         createdAt: row.created_at,

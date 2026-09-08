@@ -24,6 +24,14 @@ export default function App() {
   );
   const [showFieldMapping, setShowFieldMapping] = useState(false);
   const [justConnected, setJustConnected] = useState(readJustConnected);
+  // Set by a dashboard widget's drill-down row/cell click; Tasks.jsx applies
+  // it once (keyed off this object's identity) then it's just local state there.
+  const [taskFilterRequest, setTaskFilterRequest] = useState(null);
+
+  const navigateToTasks = useCallback((filters) => {
+    setTaskFilterRequest(filters);
+    setActiveTab('tasks');
+  }, []);
 
   // assumeConnected: the ?jira=connected redirect already proved the OAuth
   // flow succeeded, so a transient failure of this status check shouldn't
@@ -115,11 +123,14 @@ export default function App() {
               onReset={() => setStats(null)}
               jiraConnected={jiraStatus?.connected || false}
               onSyncJira={syncFromJira}
+              onNavigateToTasks={navigateToTasks}
             />
           )
         )}
 
-        {activeTab === 'tasks' && <Tasks jiraConnected={jiraStatus?.connected || false} />}
+        {activeTab === 'tasks' && (
+          <Tasks jiraConnected={jiraStatus?.connected || false} initialFilters={taskFilterRequest} />
+        )}
 
         {activeTab === 'settings' && (
           <Settings jiraStatus={jiraStatus} onStatusChange={setJiraStatus} onDataLoaded={setStats} />
