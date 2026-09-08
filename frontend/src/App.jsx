@@ -64,8 +64,8 @@ export default function App() {
 
   // Shared by the "Синхронизировать данные из Jira" button on the connect
   // screen and the "Обновить данные из Jira" button on the dashboard itself.
-  const syncFromJira = useCallback(async () => {
-    await syncJira();
+  const syncFromJira = useCallback(async (force = false) => {
+    await syncJira(force);
     const data = await getJiraIssues();
     setStats(data);
     setJiraStatus((prev) => ({ ...(prev || {}), connected: true, issueCount: data.total, lastSyncedAt: data.lastSyncedAt }));

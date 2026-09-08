@@ -17,8 +17,12 @@ export async function getJiraStatus() {
   return res.data;
 }
 
-export async function syncJira() {
-  const res = await api.post('/jira/sync');
+// force=true recomputes lead/cycle/reopen time for every issue regardless
+// of whether Jira's `updated` timestamp changed — needed once after a fix
+// to that calculation itself, since otherwise already-synced issues keep
+// serving their stale stored values forever.
+export async function syncJira(force = false) {
+  const res = await api.post('/jira/sync', null, force ? { params: { force: '1' } } : undefined);
   return res.data;
 }
 

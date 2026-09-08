@@ -72,11 +72,11 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
   const [expandedWidget, setExpandedWidget] = useState(null);
   const syncProgress = useSyncProgress(isSyncing);
 
-  const handleSyncJira = async () => {
+  const handleSyncJira = async (force = false) => {
     setIsSyncing(true);
     setSyncError(null);
     try {
-      await onSyncJira();
+      await onSyncJira(force);
     } catch (err) {
       setSyncError(err.response?.data?.error || 'Не удалось синхронизировать данные из Jira');
     } finally {
@@ -115,13 +115,23 @@ export default function Dashboard({ stats, onReset, jiraConnected, onSyncJira, o
         </div>
         <div className="flex items-center gap-4">
           {jiraConnected && (
-            <button
-              onClick={handleSyncJira}
-              disabled={isSyncing}
-              className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {syncButtonLabel(isSyncing, syncProgress)}
-            </button>
+            <>
+              <button
+                onClick={() => handleSyncJira(false)}
+                disabled={isSyncing}
+                className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {syncButtonLabel(isSyncing, syncProgress)}
+              </button>
+              <button
+                onClick={() => handleSyncJira(true)}
+                disabled={isSyncing}
+                title="Пересчитывает время в статусах для всех задач заново, даже если они не менялись в Jira — используйте после обновления приложения, если цифры выглядят устаревшими"
+                className="text-sm text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
+              >
+                Полная пересинхронизация
+              </button>
+            </>
           )}
           <button
             onClick={onReset}

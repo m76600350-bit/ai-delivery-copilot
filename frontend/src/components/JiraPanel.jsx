@@ -22,11 +22,11 @@ export default function JiraPanel({ status, onStatusChange, onDataLoaded, onConf
 
   if (!status) return null;
 
-  const handleSync = async () => {
+  const handleSync = async (force = false) => {
     setIsSyncing(true);
     setError(null);
     try {
-      await syncJira();
+      await syncJira(force);
       const data = await getJiraIssues();
       onDataLoaded(data);
       onStatusChange({
@@ -72,12 +72,22 @@ export default function JiraPanel({ status, onStatusChange, onDataLoaded, onConf
           </p>
           <div className="flex gap-4 items-center flex-wrap">
             <button
-              onClick={handleSync}
+              onClick={() => handleSync(false)}
               disabled={isSyncing}
               className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
             >
               {syncButtonLabel(isSyncing, progress)}
             </button>
+            {status.issueCount > 0 && (
+              <button
+                onClick={() => handleSync(true)}
+                disabled={isSyncing}
+                title="Пересчитывает время в статусах для всех задач заново, даже если они не менялись в Jira — используйте после обновления приложения, если цифры выглядят устаревшими"
+                className="text-sm text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
+              >
+                Полная пересинхронизация
+              </button>
+            )}
             {status.issueCount > 0 && (
               <button
                 onClick={handleShowExisting}
