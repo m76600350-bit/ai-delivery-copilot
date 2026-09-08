@@ -4,7 +4,6 @@ const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/j
 
 const router = express.Router();
 
-const JQL = 'project = SCRUM ORDER BY updated DESC';
 const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'resolutiondate', 'issuetype', 'project'];
 
 // Internal field names the app understands; each can be pointed at a
@@ -29,20 +28,107 @@ async function getFieldMapping(cloudId) {
   return mapping;
 }
 
+// What POST /api/jira/sync pulls from Jira, set via Settings → "Фильтр
+// синхронизации" instead of the user hand-writing JQL. Empty arrays / a
+// null updatedSinceDays mean "no restriction on that dimension".
+async function getSyncFilter(cloudId) {
+  await ensureSchema();
+  const { rows } = await getPool().query('SELECT * FROM jira_sync_filter WHERE cloud_id = $1', [cloudId]);
+  const row = rows[0];
+  return {
+    projects: row?.projects || [],
+    issueTypes: row?.issue_types || [],
+    teams: row?.teams || [],
+    updatedSinceDays: row?.updated_since_days ?? null,
+  };
+}
+
+async function saveSyncFilter(cloudId, filter) {
+  await ensureSchema();
+  const updatedSinceDays =
+    filter.updatedSinceDays == null || filter.updatedSinceDays === ''
+      ? null
+      : Math.max(0, Math.trunc(Number(filter.updatedSinceDays)) || 0);
+
+  await getPool().query(
+    `INSERT INTO jira_sync_filter (cloud_id, projects, issue_types, teams, updated_since_days)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (cloud_id) DO UPDATE SET
+       projects = EXCLUDED.projects,
+       issue_types = EXCLUDED.issue_types,
+       teams = EXCLUDED.teams,
+       updated_since_days = EXCLUDED.updated_since_days`,
+    [
+      cloudId,
+      Array.isArray(filter.projects) ? filter.projects : [],
+      Array.isArray(filter.issueTypes) ? filter.issueTypes : [],
+      Array.isArray(filter.teams) ? filter.teams : [],
+      updatedSinceDays,
+    ]
+  );
+}
+
+// JQL escaping for a value inside a quoted string literal — backslash and
+// double-quote are the only characters JQL string literals require escaped.
+function jqlQuote(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function buildJqlFromFilter(filter) {
+  const clauses = [];
+  if (filter.projects?.length) {
+    clauses.push(`project in (${filter.projects.map(jqlQuote).join(',')})`);
+  }
+  if (filter.issueTypes?.length) {
+    clauses.push(`issuetype in (${filter.issueTypes.map(jqlQuote).join(',')})`);
+  }
+  if (filter.updatedSinceDays != null && filter.updatedSinceDays > 0) {
+    clauses.push(`updated >= -${filter.updatedSinceDays}d`);
+  }
+  return clauses.length ? `${clauses.join(' AND ')} ORDER BY updated DESC` : 'ORDER BY updated DESC';
+}
+
+// GET /rest/api/3/project/search — every project the connected account can
+// see, offered as options for the "Проект" filter dropdown.
+async function fetchJiraProjects(accessToken, cloudId) {
+  const projects = [];
+  let startAt = 0;
+  const maxResults = 50;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/project/search?startAt=${startAt}&maxResults=${maxResults}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to list Jira projects: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    const values = data.values || [];
+    for (const p of values) projects.push({ key: p.key, name: p.name });
+
+    startAt += values.length;
+    if (data.isLast || values.length === 0 || startAt >= data.total) break;
+  }
+
+  return projects;
+}
+
 // GET/POST /rest/api/3/search replaced the deprecated /rest/api/3/search
 // endpoint (removed by Atlassian, returns 410 Gone). The new endpoint drops
 // offset-based paging (`startAt`/`total`) for a cursor: each response may
 // carry a `nextPageToken` to pass back on the next call, and `isLast`
 // (or a missing token) marks the end of the result set.
 // https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
-async function fetchAllIssues(accessToken, cloudId, fields) {
+async function fetchAllIssues(accessToken, cloudId, fields, jql) {
   const issues = [];
   let nextPageToken;
   const maxResults = 100;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const body = { jql: JQL, maxResults, fields };
+    const body = { jql, maxResults, fields };
     if (nextPageToken) {
       body.nextPageToken = nextPageToken;
     }
@@ -432,6 +518,7 @@ router.post('/sync', async (req, res) => {
   // since otherwise already-synced issues keep their stale stored values
   // forever (their `updated` in Jira never changes just because our code did).
   const force = req.query.force === '1' || req.body?.force === true;
+  const startedAt = new Date();
   try {
     await ensureSchema();
     const { accessToken, cloudId } = await getValidAccessToken();
@@ -442,7 +529,14 @@ router.post('/sync', async (req, res) => {
     const extraFields = CANONICAL_FIELDS.map((f) => fieldMapping[f]).filter(Boolean);
     const fields = [...new Set([...BASE_FIELDS, ...extraFields])];
 
-    const rawIssues = await fetchAllIssues(accessToken, cloudId, fields);
+    // Project/type/updated-window come from Settings' "Фильтр синхронизации"
+    // and turn into JQL here; team can't reliably be expressed in JQL (its
+    // Jira field type — and whether it's even a real field vs. our labels
+    // fallback — varies per site), so it's applied client-side below instead.
+    const syncFilter = await getSyncFilter(cloudId);
+    const jql = buildJqlFromFilter(syncFilter);
+
+    const rawIssues = await fetchAllIssues(accessToken, cloudId, fields, jql);
     const statusCategoryByName = await fetchStatusCategoryMap(accessToken, cloudId);
 
     await setSyncProgress(pool, {
@@ -462,6 +556,15 @@ router.post('/sync', async (req, res) => {
       const mapped = mapJiraFields(raw, fieldMapping);
       if (!mapped.team) {
         mapped.team = mapped.labels || null;
+      }
+
+      // Team filter is applied here rather than in JQL (see comment above);
+      // a filtered-out issue still counts toward progress, just skips the
+      // DB round-trip and any changelog fetch.
+      if (syncFilter.teams.length && !syncFilter.teams.includes(mapped.team)) {
+        completed += 1;
+        await setSyncProgress(pool, { completed });
+        continue;
       }
 
       const { rows } = await pool.query('SELECT * FROM issues WHERE issue_key = $1', [mapped.issueKey]);
@@ -549,6 +652,11 @@ router.post('/sync', async (req, res) => {
     }
 
     await setSyncProgress(pool, { status: 'done', finished_at: new Date() });
+    await pool.query(
+      `INSERT INTO sync_history (started_at, finished_at, source, total, status)
+       VALUES ($1, now(), 'Jira API', $2, 'success')`,
+      [startedAt, createdCount + updatedCount]
+    ).catch(() => {});
 
     res.json({
       total: rawIssues.length,
@@ -558,6 +666,11 @@ router.post('/sync', async (req, res) => {
     });
   } catch (err) {
     await setSyncProgress(pool, { status: 'error', error: err.message, finished_at: new Date() }).catch(() => {});
+    await pool.query(
+      `INSERT INTO sync_history (started_at, finished_at, source, total, status, error)
+       VALUES ($1, now(), 'Jira API', NULL, 'error', $2)`,
+      [startedAt, err.message]
+    ).catch(() => {});
 
     if (err.code === 'NOT_CONNECTED') {
       return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
@@ -585,6 +698,89 @@ router.get('/sync/progress', async (req, res) => {
       startedAt: row.started_at,
       finishedAt: row.finished_at,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/sync/history — recent sync runs for the Settings screen's
+// "История синхронизаций" table.
+router.get('/sync/history', async (req, res) => {
+  try {
+    await ensureSchema();
+    const { rows } = await getPool().query(
+      `SELECT started_at, finished_at, source, total, status, error
+       FROM sync_history ORDER BY started_at DESC LIMIT 20`
+    );
+    res.json({
+      items: rows.map((r) => ({
+        startedAt: r.started_at,
+        finishedAt: r.finished_at,
+        source: r.source,
+        total: r.total,
+        status: r.status,
+        error: r.error,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/sync-filter — current sync filter plus the option lists for
+// each dropdown: live Jira projects, and issue types/teams actually present
+// in already-synced data (empty before the first sync).
+router.get('/sync-filter', async (req, res) => {
+  try {
+    const token = await getStoredToken();
+    if (!token) {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+
+    const filter = await getSyncFilter(token.cloud_id);
+    const pool = getPool();
+
+    const [issueTypesRes, teamsRes] = await Promise.all([
+      pool.query(
+        `SELECT DISTINCT issue_type FROM issues WHERE is_deleted = false AND issue_type IS NOT NULL ORDER BY issue_type`
+      ),
+      pool.query(`SELECT DISTINCT team FROM issues WHERE is_deleted = false AND team IS NOT NULL ORDER BY team`),
+    ]);
+
+    let projects = [];
+    try {
+      const { accessToken, cloudId } = await getValidAccessToken();
+      projects = await fetchJiraProjects(accessToken, cloudId);
+    } catch {
+      // Don't fail the whole settings screen over this — saved filter
+      // values and the other two dropdowns still render fine without it.
+    }
+
+    res.json({
+      filter,
+      options: {
+        projects,
+        issueTypes: issueTypesRes.rows.map((r) => r.issue_type),
+        teams: teamsRes.rows.map((r) => r.team),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/jira/sync-filter — replaces the whole filter; applied by the
+// frontend on every dropdown change (no separate save step).
+router.post('/sync-filter', async (req, res) => {
+  try {
+    const token = await getStoredToken();
+    if (!token) {
+      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
+    }
+
+    const { projects, issueTypes, teams, updatedSinceDays } = req.body || {};
+    await saveSyncFilter(token.cloud_id, { projects, issueTypes, teams, updatedSinceDays });
+    res.json({ ok: true, filter: await getSyncFilter(token.cloud_id) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
