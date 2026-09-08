@@ -15,7 +15,7 @@ ai-delivery-copilot/
 │   └── routes/
 │       ├── upload.js     # POST /api/upload, GET /api/stats
 │       ├── auth.js       # GET /api/auth/login, /api/auth/callback (Jira OAuth)
-│       └── jira.js       # sync/status/issues/fields/field-mapping
+│       └── jira.js       # sync/status/issues/fields/field-mapping/tasks
 ├── frontend/           # React + Vite + Tailwind
 │   ├── package.json
 │   ├── index.html
@@ -25,8 +25,14 @@ ai-delivery-copilot/
 │   │   ├── api.js
 │   │   ├── index.css
 │   │   └── components/
+│   │       ├── TopNav.jsx
 │   │       ├── Upload.jsx
 │   │       ├── Dashboard.jsx
+│   │       ├── Tasks.jsx
+│   │       ├── TaskDetailPanel.jsx
+│   │       ├── MultiSelectFilter.jsx
+│   │       ├── StatusBadge.jsx
+│   │       ├── Settings.jsx
 │   │       ├── JiraPanel.jsx
 │   │       └── FieldMapping.jsx
 │   └── public/
@@ -107,6 +113,8 @@ npm run dev
    - `GET /api/jira/field-mapping` / `POST /api/jira/field-mapping` — чтение и сохранение соответствия `canonical_field → jira_field_id` в таблице `jira_field_mapping` (ключ — `cloud_id`, так что маппинг привязан к конкретному Jira-сайту).
    - На фронтенде это экран **«Настройка полей Jira»** ([FieldMapping.jsx](frontend/src/components/FieldMapping.jsx)) — dropdown на каждое поле, опции берутся из `/api/jira/fields`, кнопка «Сохранить маппинг». Открывается автоматически сразу после первого подключения Jira (если маппинг ещё пустой) и в любой момент повторно — кнопкой **«Настройки полей»** в [JiraPanel.jsx](frontend/src/components/JiraPanel.jsx).
    - Если маппинг не настроен, `POST /api/jira/sync` не падает и не блокируется — просто использует `null` для несопоставленных canonical-полей (для `team` дополнительно есть фолбэк на `labels`, как и раньше).
+6. **Раздел «Задачи»** ([Tasks.jsx](frontend/src/components/Tasks.jsx)) — таблица issues из БД с живым поиском (debounce 300 мс), множественным выбором по статусу/команде/типу/приоритету ([MultiSelectFilter.jsx](frontend/src/components/MultiSelectFilter.jsx)), пагинацией по 20 и экспортом текущей выборки в CSV. Backing endpoint `GET /api/jira/tasks` (query: `search`, повторяемые `status`/`team`/`type`/`priority`, `page`; с `export=csv` отдаёт файл без пагинации) и `GET /api/jira/tasks/filters` (списки значений для дропдаунов, только то, что реально есть в БД). Колонка «Дней в статусе» считается на бэкенде от `updated_at` до текущего момента и показывает `—`, если `status_category` уже `Done`. Клик по строке открывает боковую панель со всеми полями задачи ([TaskDetailPanel.jsx](frontend/src/components/TaskDetailPanel.jsx)) и ссылкой «Открыть в Jira» — `{site_url}/browse/{issue_key}`, где `site_url` (например, `https://your-domain.atlassian.net`) сохраняется в `jira_tokens` при OAuth (Jira отдаёт его в том же ответе `accessible-resources`, откуда берётся `cloud_id`).
+7. **Верхняя навигация** ([TopNav.jsx](frontend/src/components/TopNav.jsx)) — табы «Дашборд», «Задачи», «Настройки» рабочие; «Команды», «Спринты», «Отчёты» показаны как заглушки (неактивны, без обработчиков) — задел под будущие разделы по общему макету продукта. «Настройки» переиспользует существующие `JiraPanel`/`FieldMapping` ([Settings.jsx](frontend/src/components/Settings.jsx)), чтобы управление подключением Jira было доступно не только на стартовом экране до первой загрузки данных.
 
 ### Переменные окружения (backend)
 

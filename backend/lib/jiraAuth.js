@@ -13,23 +13,27 @@ async function getStoredToken() {
 
 // Single-tenant app: only one Jira connection is kept, so this replaces
 // whatever token row already exists instead of accumulating history.
-async function saveToken({ accessToken, refreshToken, expiresAt, cloudId }) {
+async function saveToken({ accessToken, refreshToken, expiresAt, cloudId, siteUrl }) {
   await ensureSchema();
   const pool = getPool();
-  const existing = await pool.query('SELECT id FROM jira_tokens ORDER BY id DESC LIMIT 1');
+  const existing = await pool.query('SELECT id, site_url FROM jira_tokens ORDER BY id DESC LIMIT 1');
+
+  // A token refresh doesn't re-fetch accessible-resources, so it has no
+  // siteUrl to pass — keep whatever was stored rather than clobbering it.
+  const resolvedSiteUrl = siteUrl !== undefined ? siteUrl : existing.rows[0]?.site_url ?? null;
 
   if (existing.rows.length) {
     await pool.query(
       `UPDATE jira_tokens
-       SET access_token = $1, refresh_token = $2, expires_at = $3, cloud_id = $4, updated_at = now()
-       WHERE id = $5`,
-      [accessToken, refreshToken, expiresAt, cloudId, existing.rows[0].id]
+       SET access_token = $1, refresh_token = $2, expires_at = $3, cloud_id = $4, site_url = $5, updated_at = now()
+       WHERE id = $6`,
+      [accessToken, refreshToken, expiresAt, cloudId, resolvedSiteUrl, existing.rows[0].id]
     );
   } else {
     await pool.query(
-      `INSERT INTO jira_tokens (access_token, refresh_token, expires_at, cloud_id)
-       VALUES ($1, $2, $3, $4)`,
-      [accessToken, refreshToken, expiresAt, cloudId]
+      `INSERT INTO jira_tokens (access_token, refresh_token, expires_at, cloud_id, site_url)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [accessToken, refreshToken, expiresAt, cloudId, resolvedSiteUrl]
     );
   }
 }
@@ -67,7 +71,7 @@ async function getValidAccessToken() {
   const isExpiring = expiresAt - Date.now() < 60_000;
 
   if (!isExpiring) {
-    return { accessToken: token.access_token, cloudId: token.cloud_id };
+    return { accessToken: token.access_token, cloudId: token.cloud_id, siteUrl: token.site_url };
   }
 
   const refreshed = await refreshAccessToken(token.refresh_token);
@@ -80,7 +84,7 @@ async function getValidAccessToken() {
     cloudId: token.cloud_id,
   });
 
-  return { accessToken: refreshed.access_token, cloudId: token.cloud_id };
+  return { accessToken: refreshed.access_token, cloudId: token.cloud_id, siteUrl: token.site_url };
 }
 
 module.exports = {

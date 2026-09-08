@@ -23,6 +23,7 @@ async function ensureSchema() {
         refresh_token TEXT NOT NULL,
         expires_at TIMESTAMPTZ NOT NULL,
         cloud_id TEXT NOT NULL,
+        site_url TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
@@ -72,8 +73,9 @@ async function ensureSchema() {
         UNIQUE (cloud_id, canonical_field)
       );
 
-      -- Backfills story_points on an issues table created before this column existed.
+      -- Backfills columns on tables created before they existed.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
+      ALTER TABLE jira_tokens ADD COLUMN IF NOT EXISTS site_url TEXT;
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

@@ -293,7 +293,7 @@ router.get('/status', async (req, res) => {
     await ensureSchema();
     const pool = getPool();
 
-    const tokenRes = await pool.query('SELECT id FROM jira_tokens ORDER BY id DESC LIMIT 1');
+    const tokenRes = await pool.query('SELECT id, site_url FROM jira_tokens ORDER BY id DESC LIMIT 1');
     const countRes = await pool.query('SELECT COUNT(*)::int AS count FROM issues WHERE is_deleted = false');
     const lastSyncRes = await pool.query('SELECT MAX(last_synced_at) AS last_synced_at FROM issues');
 
@@ -301,6 +301,7 @@ router.get('/status', async (req, res) => {
       connected: tokenRes.rows.length > 0,
       issueCount: countRes.rows[0].count,
       lastSyncedAt: lastSyncRes.rows[0].last_synced_at,
+      siteUrl: tokenRes.rows[0]?.site_url || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -362,6 +363,202 @@ router.get('/issues', async (req, res) => {
       byType,
       issues,
       lastSyncedAt: lastSyncRes.rows[0].last_synced_at,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function toArray(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+// Every list/filters/export query needs the same WHERE clause, built from
+// the same query params — kept in one place so the three stay consistent.
+function buildTaskFilters(query) {
+  const conditions = ['is_deleted = false'];
+  const params = [];
+
+  const search = typeof query.search === 'string' ? query.search.trim() : '';
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`(issue_key ILIKE $${params.length} OR summary ILIKE $${params.length})`);
+  }
+
+  const statuses = toArray(query.status);
+  if (statuses.length) {
+    params.push(statuses);
+    conditions.push(`COALESCE(status, 'Без статуса') = ANY($${params.length}::text[])`);
+  }
+
+  const teams = toArray(query.team);
+  if (teams.length) {
+    params.push(teams);
+    conditions.push(`COALESCE(team, 'Без команды') = ANY($${params.length}::text[])`);
+  }
+
+  const types = toArray(query.type);
+  if (types.length) {
+    params.push(types);
+    conditions.push(`COALESCE(issue_type, 'Без типа') = ANY($${params.length}::text[])`);
+  }
+
+  const priorities = toArray(query.priority);
+  if (priorities.length) {
+    params.push(priorities);
+    conditions.push(`COALESCE(priority, 'Без приоритета') = ANY($${params.length}::text[])`);
+  }
+
+  return { where: conditions.join(' AND '), params };
+}
+
+const FINAL_STATUS_CATEGORY = 'Done';
+
+function withDaysInStatus(row) {
+  const daysInStatus =
+    row.status_category === FINAL_STATUS_CATEGORY
+      ? null
+      : Math.max(0, Math.floor((Date.now() - new Date(row.updated_at).getTime()) / 86400000));
+
+  return {
+    id: row.id,
+    issueKey: row.issue_key,
+    project: row.project,
+    issueType: row.issue_type,
+    summary: row.summary,
+    status: row.status,
+    statusCategory: row.status_category,
+    priority: row.priority,
+    assignee: row.assignee,
+    team: row.team,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at,
+    resolvedAt: row.resolved_at,
+    cycleTime: row.cycle_time,
+    sprint: row.sprint,
+    storyPoints: row.story_points,
+    labels: row.labels,
+    lastSyncedAt: row.last_synced_at,
+    daysInStatus,
+  };
+}
+
+const TASK_LIST_SELECT = `
+  SELECT
+    id, issue_key, project,
+    COALESCE(issue_type, 'Без типа') AS issue_type,
+    summary,
+    COALESCE(status, 'Без статуса') AS status,
+    status_category,
+    COALESCE(priority, 'Без приоритета') AS priority,
+    assignee,
+    COALESCE(team, 'Без команды') AS team,
+    created_at, updated_at, started_at, resolved_at, cycle_time,
+    sprint, story_points, labels, last_synced_at
+  FROM issues
+`;
+
+function csvEscape(value) {
+  if (value == null) return '';
+  const str = String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+const CSV_COLUMNS = [
+  ['Ключ', (t) => t.issueKey],
+  ['Название', (t) => t.summary],
+  ['Тип', (t) => t.issueType],
+  ['Команда', (t) => t.team],
+  ['Исполнитель', (t) => t.assignee || ''],
+  ['Статус', (t) => t.status],
+  ['Приоритет', (t) => t.priority],
+  ['Дней в статусе', (t) => (t.daysInStatus == null ? '' : t.daysInStatus)],
+  ['Story Points', (t) => (t.storyPoints == null ? '' : t.storyPoints)],
+  ['Спринт', (t) => t.sprint || ''],
+];
+
+function toCsv(tasks) {
+  const header = CSV_COLUMNS.map(([label]) => csvEscape(label)).join(',');
+  const rows = tasks.map((t) => CSV_COLUMNS.map(([, get]) => csvEscape(get(t))).join(','));
+  // BOM so Excel opens the UTF-8 file (Cyrillic headers/values) without mangling it.
+  return '﻿' + [header, ...rows].join('\r\n');
+}
+
+const PAGE_SIZE = 20;
+
+// GET /api/jira/tasks — paginated, filterable, searchable issue list backing
+// the "Задачи" screen. Pass ?export=csv to instead download every matching
+// row (ignoring pagination) as a CSV attachment.
+router.get('/tasks', async (req, res) => {
+  try {
+    await ensureSchema();
+    const pool = getPool();
+    const { where, params } = buildTaskFilters(req.query);
+
+    if (req.query.export === 'csv') {
+      const { rows } = await pool.query(
+        `${TASK_LIST_SELECT} WHERE ${where} ORDER BY updated_at DESC NULLS LAST`,
+        params
+      );
+      const csv = toCsv(rows.map(withDaysInStatus));
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="tasks.csv"');
+      return res.send(csv);
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const offset = (page - 1) * PAGE_SIZE;
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS count FROM issues WHERE ${where}`, params);
+    const listParams = [...params, PAGE_SIZE, offset];
+    const { rows } = await pool.query(
+      `${TASK_LIST_SELECT} WHERE ${where} ORDER BY updated_at DESC NULLS LAST LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+      listParams
+    );
+
+    const token = await getStoredToken();
+
+    res.json({
+      items: rows.map(withDaysInStatus),
+      total: countRes.rows[0].count,
+      page,
+      pageSize: PAGE_SIZE,
+      siteUrl: token?.site_url || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/tasks/filters — distinct values for each filter dropdown,
+// reflecting what's actually in the DB rather than a hardcoded list.
+router.get('/tasks/filters', async (req, res) => {
+  try {
+    await ensureSchema();
+    const pool = getPool();
+
+    const [statuses, teams, types, priorities] = await Promise.all([
+      pool.query(
+        `SELECT DISTINCT COALESCE(status, 'Без статуса') AS v FROM issues WHERE is_deleted = false ORDER BY v`
+      ),
+      pool.query(
+        `SELECT DISTINCT COALESCE(team, 'Без команды') AS v FROM issues WHERE is_deleted = false ORDER BY v`
+      ),
+      pool.query(
+        `SELECT DISTINCT COALESCE(issue_type, 'Без типа') AS v FROM issues WHERE is_deleted = false ORDER BY v`
+      ),
+      pool.query(
+        `SELECT DISTINCT COALESCE(priority, 'Без приоритета') AS v FROM issues WHERE is_deleted = false ORDER BY v`
+      ),
+    ]);
+
+    res.json({
+      statuses: statuses.rows.map((r) => r.v),
+      teams: teams.rows.map((r) => r.v),
+      types: types.rows.map((r) => r.v),
+      priorities: priorities.rows.map((r) => r.v),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

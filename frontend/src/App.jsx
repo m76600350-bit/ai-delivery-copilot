@@ -3,6 +3,9 @@ import Upload from './components/Upload.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import JiraPanel from './components/JiraPanel.jsx';
 import FieldMapping from './components/FieldMapping.jsx';
+import Tasks from './components/Tasks.jsx';
+import Settings from './components/Settings.jsx';
+import TopNav from './components/TopNav.jsx';
 import { getJiraStatus, getFieldMapping, syncJira, getJiraIssues } from './api.js';
 
 // /api/auth/callback redirects here with ?jira=connected once the OAuth flow
@@ -14,6 +17,7 @@ function readJustConnected() {
 }
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState(null);
   const [jiraStatus, setJiraStatus] = useState(() =>
     readJustConnected() ? { connected: true, issueCount: 0, lastSyncedAt: null } : null
@@ -74,45 +78,51 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <h1 className="text-xl font-semibold text-gray-800">Delivery Dashboard</h1>
-      </header>
+      <TopNav activeTab={activeTab} onChangeTab={setActiveTab} />
 
       <main className="p-6">
-        {!stats ? (
-          <div className="space-y-6">
-            {justConnected && (
-              <div className="max-w-2xl mx-auto bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
-                <span>Jira успешно подключена</span>
-                <button
-                  onClick={() => setJustConnected(false)}
-                  className="text-green-600 hover:text-green-800"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-            <JiraPanel
-              status={jiraStatus}
-              onStatusChange={setJiraStatus}
-              onDataLoaded={setStats}
-              onConfigureFields={jiraStatus?.connected ? () => setShowFieldMapping(true) : undefined}
-            />
-            {showFieldMapping && jiraStatus?.connected && (
-              <FieldMapping
-                onClose={() => setShowFieldMapping(false)}
-                onSaved={() => setShowFieldMapping(false)}
+        {activeTab === 'dashboard' && (
+          !stats ? (
+            <div className="space-y-6">
+              {justConnected && (
+                <div className="max-w-2xl mx-auto bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
+                  <span>Jira успешно подключена</span>
+                  <button
+                    onClick={() => setJustConnected(false)}
+                    className="text-green-600 hover:text-green-800"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              <JiraPanel
+                status={jiraStatus}
+                onStatusChange={setJiraStatus}
+                onDataLoaded={setStats}
+                onConfigureFields={jiraStatus?.connected ? () => setShowFieldMapping(true) : undefined}
               />
-            )}
-            <Upload onUploaded={setStats} />
-          </div>
-        ) : (
-          <Dashboard
-            stats={stats}
-            onReset={() => setStats(null)}
-            jiraConnected={jiraStatus?.connected || false}
-            onSyncJira={syncFromJira}
-          />
+              {showFieldMapping && jiraStatus?.connected && (
+                <FieldMapping
+                  onClose={() => setShowFieldMapping(false)}
+                  onSaved={() => setShowFieldMapping(false)}
+                />
+              )}
+              <Upload onUploaded={setStats} />
+            </div>
+          ) : (
+            <Dashboard
+              stats={stats}
+              onReset={() => setStats(null)}
+              jiraConnected={jiraStatus?.connected || false}
+              onSyncJira={syncFromJira}
+            />
+          )
+        )}
+
+        {activeTab === 'tasks' && <Tasks jiraConnected={jiraStatus?.connected || false} />}
+
+        {activeTab === 'settings' && (
+          <Settings jiraStatus={jiraStatus} onStatusChange={setJiraStatus} onDataLoaded={setStats} />
         )}
       </main>
     </div>

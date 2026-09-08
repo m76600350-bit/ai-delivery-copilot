@@ -105,6 +105,9 @@ router.get('/callback', async (req, res) => {
 
     const resources = await resourcesRes.json();
     const cloudId = resources?.[0]?.id;
+    // e.g. "https://your-domain.atlassian.net" — used to build "Open in Jira"
+    // links (`${siteUrl}/browse/${issueKey}`) since browse URLs aren't cloud-id-based.
+    const siteUrl = resources?.[0]?.url || null;
     if (!cloudId) {
       return res.status(502).send('No accessible Jira sites found for this account');
     }
@@ -115,6 +118,7 @@ router.get('/callback', async (req, res) => {
       refreshToken: tokenData.refresh_token,
       expiresAt,
       cloudId,
+      siteUrl,
     });
 
     const frontendUrl = process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL;

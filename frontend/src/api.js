@@ -42,4 +42,19 @@ export async function saveFieldMapping(mapping) {
   return res.data;
 }
 
+export async function getTasks(params) {
+  const res = await api.get('/jira/tasks', { params });
+  return res.data;
+}
+
+export async function getTaskFilters() {
+  const res = await api.get('/jira/tasks/filters');
+  return res.data;
+}
+
+export async function exportTasksCsv(params) {
+  const res = await api.get('/jira/tasks', { params: { ...params, export: 'csv' }, responseType: 'blob' });
+  return res.data;
+}
+
 export default api;
