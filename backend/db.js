@@ -135,6 +135,35 @@ async function ensureSchema() {
 
       CREATE INDEX IF NOT EXISTS idx_issue_sprints_sprint_id ON issue_sprints(sprint_id);
 
+      -- One row per Jira issue link, from the perspective of issue_id (the
+      -- link's issuelinks field on that issue) — link_type is the phrase
+      -- describing that direction (e.g. "is blocked by", "blocks"), not just
+      -- the link type's name, so "блокер" detection can match on it directly.
+      -- linked_issue_id is nullable: the other issue may not be synced (a
+      -- different, unsynced project) — linked_issue_key always identifies it.
+      -- Rebuilt from scratch for an issue on every sync (delete then
+      -- re-insert), so it never accumulates stale links.
+      CREATE TABLE IF NOT EXISTS issue_links (
+        id SERIAL PRIMARY KEY,
+        issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+        linked_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+        linked_issue_key TEXT NOT NULL,
+        link_type TEXT,
+        linked_issue_status TEXT,
+        linked_issue_status_category TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_issue_links_issue_id ON issue_links(issue_id);
+
+      -- Manually configured per-status WIP limits (Настройки → "WIP-лимиты"),
+      -- global across teams — a team's effective limit is the sum of these
+      -- over whichever indeterminate statuses are in play. NULL/absent means
+      -- "no limit set" for that status.
+      CREATE TABLE IF NOT EXISTS wip_limits (
+        status_name TEXT PRIMARY KEY,
+        limit_value INTEGER
+      );
+
       -- Backfills columns on tables created before they existed.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS lead_time_days NUMERIC;

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { jiraLoginUrl, getJiraIssues, getJiraStatus } from '../api.js';
 import FieldMapping from './FieldMapping.jsx';
 import SyncHistory from './SyncHistory.jsx';
+import WipLimits from './WipLimits.jsx';
 
 function domainFromSiteUrl(siteUrl) {
   if (!siteUrl) return null;
@@ -86,6 +87,7 @@ export default function Settings({ jiraStatus, onStatusChange, onDataLoaded }) {
         />
       )}
 
+      {jiraStatus?.connected && <WipLimits />}
       {jiraStatus?.connected && <SyncHistory onSynced={handleSynced} />}
     </div>
   );

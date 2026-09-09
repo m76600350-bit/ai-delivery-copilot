@@ -4,7 +4,7 @@ const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/j
 
 const router = express.Router();
 
-const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'resolutiondate', 'issuetype', 'project'];
+const BASE_FIELDS = ['summary', 'status', 'priority', 'assignee', 'labels', 'created', 'updated', 'resolutiondate', 'issuetype', 'project', 'issuelinks'];
 
 // Internal field names the app understands; each can be pointed at a
 // Jira custom field id via jira_field_mapping since those ids are
@@ -100,6 +100,29 @@ function extractFieldValue(rawValue) {
 // of site language, so every category comparison in this file is on key,
 // never name. `status_category` is stored as this key throughout.
 const CATEGORY_KEY = { NEW: 'new', IN_PROGRESS: 'indeterminate', DONE: 'done' };
+
+// A Jira issuelinks entry carries exactly one of inwardIssue/outwardIssue —
+// which one determines which phrase of the link type applies from *this*
+// issue's perspective ("is blocked by" vs "blocks", for the standard
+// "Blocks" link type). Storing that phrase directly (rather than just the
+// link type name) is what lets the blocker query below match on it without
+// having to know every possible link type name a site might define.
+function extractIssueLinks(issue) {
+  const links = issue.fields?.issuelinks || [];
+  const result = [];
+  for (const link of links) {
+    const other = link.inwardIssue || link.outwardIssue;
+    if (!other) continue;
+    const phrase = link.inwardIssue ? link.type?.inward : link.type?.outward;
+    result.push({
+      linkedIssueKey: other.key,
+      linkType: phrase || link.type?.name || null,
+      linkedIssueStatus: other.fields?.status?.name || null,
+      linkedIssueStatusCategory: other.fields?.status?.statusCategory?.key || null,
+    });
+  }
+  return result;
+}
 
 function mapJiraFields(issue, fieldMapping) {
   const f = issue.fields || {};
@@ -410,6 +433,60 @@ router.post('/field-mapping', async (req, res) => {
   }
 });
 
+// GET /api/jira/wip-limits — every currently-used "indeterminate" status
+// (from already-synced data, not a hardcoded workflow list) plus whatever
+// limit has been configured for it. Global across teams — see wip_limits'
+// schema comment for why.
+router.get('/wip-limits', async (req, res) => {
+  try {
+    await ensureSchema();
+    const pool = getPool();
+    const [{ rows: statusRows }, { rows: limitRows }] = await Promise.all([
+      pool.query(
+        `SELECT DISTINCT status FROM issues WHERE is_deleted = false AND status_category = 'indeterminate' AND status IS NOT NULL ORDER BY status`
+      ),
+      pool.query('SELECT status_name, limit_value FROM wip_limits'),
+    ]);
+
+    const limits = {};
+    for (const row of limitRows) limits[row.status_name] = row.limit_value;
+
+    res.json({ statuses: statusRows.map((r) => r.status), limits });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/jira/wip-limits — body: { statusName, limitValue }. Upserts a
+// single status's limit (called on every field change from Settings, no
+// separate Save step); an empty/null limitValue clears the limit instead of
+// storing a meaningless row.
+router.post('/wip-limits', async (req, res) => {
+  try {
+    await ensureSchema();
+    const { statusName, limitValue } = req.body || {};
+    if (!statusName) {
+      return res.status(400).json({ error: 'statusName is required' });
+    }
+
+    const pool = getPool();
+    if (limitValue == null || limitValue === '') {
+      await pool.query('DELETE FROM wip_limits WHERE status_name = $1', [statusName]);
+    } else {
+      const parsed = Math.max(0, Math.trunc(Number(limitValue)) || 0);
+      await pool.query(
+        `INSERT INTO wip_limits (status_name, limit_value) VALUES ($1, $2)
+         ON CONFLICT (status_name) DO UPDATE SET limit_value = EXCLUDED.limit_value`,
+        [statusName, parsed]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Upserts only the given fields into the singleton sync_progress row.
 // Column defaults cover any field a partial patch omits, so this is safe to
 // call with {completed} alone even if (in principle) no row exists yet.
@@ -701,14 +778,16 @@ router.post('/sync', async (req, res) => {
         reopenCount = computed.reopenCount;
       }
 
+      let issueRowId;
       if (!existing) {
-        await pool.query(
+        const { rows: insertedRows } = await pool.query(
           `INSERT INTO issues (
              issue_key, project, issue_type, summary, status, status_category,
              priority, assignee, team, created_at, updated_at, started_at,
              resolved_at, cycle_time, lead_time_days, reopen_count, sprint,
              story_points, labels, last_synced_at, is_deleted
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now(), false)`,
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now(), false)
+           RETURNING id`,
           [
             mapped.issueKey, mapped.project, mapped.issueType, mapped.summary,
             mapped.status, mapped.statusCategory, mapped.priority, mapped.assignee,
@@ -717,6 +796,7 @@ router.post('/sync', async (req, res) => {
             mapped.storyPoints, mapped.labels,
           ]
         );
+        issueRowId = insertedRows[0].id;
         createdCount += 1;
       } else {
         // Diff tracked fields against the stored row and log each change
@@ -746,7 +826,22 @@ router.post('/sync', async (req, res) => {
             mapped.storyPoints, mapped.labels, existing.id,
           ]
         );
+        issueRowId = existing.id;
         updatedCount += 1;
+      }
+
+      // Rebuilt from scratch each sync rather than diffed — issuelinks
+      // changes (new/removed links, the other side's status moving) are
+      // common enough that upserting per-link isn't worth the complexity.
+      await pool.query('DELETE FROM issue_links WHERE issue_id = $1', [issueRowId]);
+      const links = extractIssueLinks(raw);
+      for (const link of links) {
+        const { rows: linkedRows } = await pool.query('SELECT id FROM issues WHERE issue_key = $1', [link.linkedIssueKey]);
+        await pool.query(
+          `INSERT INTO issue_links (issue_id, linked_issue_id, linked_issue_key, link_type, linked_issue_status, linked_issue_status_category)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [issueRowId, linkedRows[0]?.id || null, link.linkedIssueKey, link.linkType, link.linkedIssueStatus, link.linkedIssueStatusCategory]
+        );
       }
 
       completed += 1;
