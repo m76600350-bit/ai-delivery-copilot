@@ -105,11 +105,43 @@ async function ensureSchema() {
 
       CREATE INDEX IF NOT EXISTS idx_sync_history_started_at ON sync_history(started_at DESC);
 
+      -- One row per Jira sprint we've decided to track — only the active
+      -- sprint(s) and the last few closed ones per board (see the Agile sync
+      -- in routes/jira.js), not full sprint history.
+      CREATE TABLE IF NOT EXISTS sprints (
+        id SERIAL PRIMARY KEY,
+        jira_sprint_id INTEGER UNIQUE NOT NULL,
+        name TEXT,
+        start_date TIMESTAMPTZ,
+        end_date TIMESTAMPTZ,
+        complete_date TIMESTAMPTZ,
+        state TEXT,
+        goal TEXT,
+        board_id INTEGER
+      );
+
+      -- issue_sprints is a many-to-many junction rather than a column on
+      -- issues, since an issue can (and often does) pass through more than
+      -- one sprint over its lifetime — a single issues.sprint_id would only
+      -- ever capture the latest one. added_after_sprint_start answers "was
+      -- this issue in the sprint at kickoff, or added mid-sprint" for that
+      -- specific issue/sprint pairing.
+      CREATE TABLE IF NOT EXISTS issue_sprints (
+        issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+        sprint_id INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+        added_after_sprint_start BOOLEAN,
+        PRIMARY KEY (issue_id, sprint_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_issue_sprints_sprint_id ON issue_sprints(sprint_id);
+
       -- Backfills columns on tables created before they existed.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS lead_time_days NUMERIC;
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE jira_tokens ADD COLUMN IF NOT EXISTS site_url TEXT;
+      ALTER TABLE sync_history ADD COLUMN IF NOT EXISTS sprints_synced INTEGER;
+      ALTER TABLE sync_history ADD COLUMN IF NOT EXISTS sprint_issue_links INTEGER;
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

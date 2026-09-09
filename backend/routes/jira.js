@@ -428,6 +428,206 @@ async function setSyncProgress(pool, patch) {
   );
 }
 
+// How many most-recently-completed sprints (per board) to keep, on top of
+// whatever's currently active — pulling a board's entire sprint history
+// isn't practical (or useful) for this feature.
+const CLOSED_SPRINTS_TO_KEEP = 3;
+
+// GET /rest/agile/1.0/board?projectKeyOrId=... — every board associated
+// with a Jira project, paginated via startAt/maxResults/isLast (same
+// offset-paging style as the rest of the Agile API, unlike the newer
+// cursor-based /rest/api/3/search/jql).
+async function fetchBoardsForProject(accessToken, cloudId, projectKey) {
+  const boards = [];
+  let startAt = 0;
+  const maxResults = 50;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}&startAt=${startAt}&maxResults=${maxResults}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to list boards for project ${projectKey}: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    const values = data.values || [];
+    boards.push(...values);
+
+    startAt += values.length;
+    if (data.isLast || values.length === 0) break;
+  }
+
+  return boards;
+}
+
+// GET /rest/agile/1.0/board/{boardId}/sprint?state=active,closed — a
+// Kanban-only board has no sprints and answers 400 ("does not support
+// sprints"); that's expected, not a real error, so it's treated as "no
+// sprints on this board" rather than aborting the whole sync.
+async function fetchSprintsForBoard(accessToken, cloudId, boardId) {
+  const sprints = [];
+  let startAt = 0;
+  const maxResults = 50;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/agile/1.0/board/${boardId}/sprint?state=active,closed&startAt=${startAt}&maxResults=${maxResults}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+    if (res.status === 400) return [];
+    if (!res.ok) {
+      throw new Error(`Failed to list sprints for board ${boardId}: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    const values = data.values || [];
+    sprints.push(...values);
+
+    startAt += values.length;
+    if (data.isLast || values.length === 0) break;
+  }
+
+  return sprints;
+}
+
+// Active sprint(s) as-is, plus only the most recently completed
+// CLOSED_SPRINTS_TO_KEEP — the practical limit from the sync requirements,
+// rather than every sprint the board has ever run.
+function selectSprintsToTrack(sprints) {
+  const active = sprints.filter((s) => s.state === 'active');
+  const closed = sprints
+    .filter((s) => s.state === 'closed')
+    .sort((a, b) => new Date(b.completeDate || b.endDate || 0).getTime() - new Date(a.completeDate || a.endDate || 0).getTime())
+    .slice(0, CLOSED_SPRINTS_TO_KEEP);
+  return [...active, ...closed];
+}
+
+// GET /rest/agile/1.0/sprint/{sprintId}/issue?fields=created — only the
+// `created` field is requested since that's all this needs (whether the
+// issue existed before the sprint's start_date); offset-paged like the
+// board/sprint endpoints above.
+async function fetchSprintIssueKeys(accessToken, cloudId, sprintId) {
+  const issues = [];
+  let startAt = 0;
+  const maxResults = 100;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(
+      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/agile/1.0/sprint/${sprintId}/issue?fields=created&startAt=${startAt}&maxResults=${maxResults}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to list issues for sprint ${sprintId}: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    const pageIssues = data.issues || [];
+    issues.push(...pageIssues);
+
+    startAt += pageIssues.length;
+    if (pageIssues.length === 0 || (typeof data.total === 'number' && startAt >= data.total)) break;
+  }
+
+  return issues;
+}
+
+// Best-effort Agile-API enrichment layered on top of the main issue sync:
+// for every Jira project already present in `issues`, find its board(s),
+// pick the sprints worth tracking (see selectSprintsToTrack), and record
+// which already-synced issues were in each one — plus whether each issue
+// was there from kickoff or added mid-sprint (created_at vs. the sprint's
+// start_date; changelog-based detection would be more precise but means an
+// extra Jira request per issue on top of what the main sync already does).
+// Runs after the issue loop and is intentionally isolated in its own
+// try/catch at the call site — a Jira Software licensing/permission gap or
+// a single misbehaving board shouldn't fail the whole sync.
+async function syncSprintsForCloud(accessToken, cloudId, pool) {
+  const { rows: projectRows } = await pool.query(
+    `SELECT DISTINCT project FROM issues WHERE is_deleted = false AND project IS NOT NULL`
+  );
+
+  let sprintsSynced = 0;
+  let sprintIssueLinks = 0;
+  // First error message seen across every project/board, surfaced back to
+  // the caller (sprintSyncError in the /sync response and sync_history) —
+  // e.g. a 403 from the whole org lacking Agile-API scope would otherwise
+  // fail every project identically and silently, with sprintsSynced simply
+  // staying 0 and no visible signal of why.
+  let firstError = null;
+
+  for (const { project } of projectRows) {
+    let boards;
+    try {
+      boards = await fetchBoardsForProject(accessToken, cloudId, project);
+    } catch (err) {
+      // A project without a visible board (or without Jira Software access)
+      // just contributes no sprint data — move on to the next project.
+      firstError = firstError || err.message;
+      continue;
+    }
+
+    for (const board of boards) {
+      let boardSprints;
+      try {
+        boardSprints = await fetchSprintsForBoard(accessToken, cloudId, board.id);
+      } catch (err) {
+        firstError = firstError || err.message;
+        continue;
+      }
+
+      for (const sprint of selectSprintsToTrack(boardSprints)) {
+        const { rows: upserted } = await pool.query(
+          `INSERT INTO sprints (jira_sprint_id, name, start_date, end_date, complete_date, state, goal, board_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (jira_sprint_id) DO UPDATE SET
+             name = EXCLUDED.name, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+             complete_date = EXCLUDED.complete_date, state = EXCLUDED.state, goal = EXCLUDED.goal,
+             board_id = EXCLUDED.board_id
+           RETURNING id`,
+          [sprint.id, sprint.name || null, sprint.startDate || null, sprint.endDate || null,
+           sprint.completeDate || null, sprint.state || null, sprint.goal || null, board.id]
+        );
+        const sprintRowId = upserted[0].id;
+        sprintsSynced += 1;
+
+        let sprintIssues;
+        try {
+          sprintIssues = await fetchSprintIssueKeys(accessToken, cloudId, sprint.id);
+        } catch (err) {
+          firstError = firstError || err.message;
+          continue;
+        }
+
+        for (const sprintIssue of sprintIssues) {
+          const { rows: issueRows } = await pool.query('SELECT id FROM issues WHERE issue_key = $1', [sprintIssue.key]);
+          const issueRow = issueRows[0];
+          // The sprint can include issues outside every synced project (rare
+          // cross-project moves) or issues our own SYNC_JQL filtered out —
+          // only link what we actually have a row for.
+          if (!issueRow) continue;
+
+          const issueCreatedAt = sprintIssue.fields?.created ? new Date(sprintIssue.fields.created).getTime() : null;
+          const sprintStartAt = sprint.startDate ? new Date(sprint.startDate).getTime() : null;
+          const addedAfterStart =
+            issueCreatedAt != null && sprintStartAt != null ? issueCreatedAt > sprintStartAt : null;
+
+          await pool.query(
+            `INSERT INTO issue_sprints (issue_id, sprint_id, added_after_sprint_start)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (issue_id, sprint_id) DO UPDATE SET added_after_sprint_start = EXCLUDED.added_after_sprint_start`,
+            [issueRow.id, sprintRowId, addedAfterStart]
+          );
+          sprintIssueLinks += 1;
+        }
+      }
+    }
+  }
+
+  return { sprintsSynced, sprintIssueLinks, firstError };
+}
+
 router.post('/sync', async (req, res) => {
   const pool = getPool();
   // Bypasses the "skip changelog if Jira's updated timestamp is unchanged"
@@ -554,10 +754,25 @@ router.post('/sync', async (req, res) => {
     }
 
     await setSyncProgress(pool, { status: 'done', finished_at: new Date() });
+
+    // Best-effort — a Jira Software licensing/permission gap or a single bad
+    // board shouldn't turn an otherwise-successful issue sync into a failure.
+    let sprintsSynced = 0;
+    let sprintIssueLinks = 0;
+    let sprintSyncError = null;
+    try {
+      const sprintResult = await syncSprintsForCloud(accessToken, cloudId, pool);
+      sprintsSynced = sprintResult.sprintsSynced;
+      sprintIssueLinks = sprintResult.sprintIssueLinks;
+      sprintSyncError = sprintResult.firstError;
+    } catch (err) {
+      sprintSyncError = err.message;
+    }
+
     await pool.query(
-      `INSERT INTO sync_history (started_at, finished_at, source, total, status)
-       VALUES ($1, now(), 'Jira API', $2, 'success')`,
-      [startedAt, createdCount + updatedCount]
+      `INSERT INTO sync_history (started_at, finished_at, source, total, status, error, sprints_synced, sprint_issue_links)
+       VALUES ($1, now(), 'Jira API', $2, 'success', $3, $4, $5)`,
+      [startedAt, createdCount + updatedCount, sprintSyncError, sprintsSynced, sprintIssueLinks]
     ).catch(() => {});
 
     res.json({
@@ -565,6 +780,9 @@ router.post('/sync', async (req, res) => {
       created: createdCount,
       updated: updatedCount,
       fieldMappingConfigured: extraFields.length > 0,
+      sprintsSynced,
+      sprintIssueLinks,
+      sprintSyncError,
     });
   } catch (err) {
     await setSyncProgress(pool, { status: 'error', error: err.message, finished_at: new Date() }).catch(() => {});
@@ -611,7 +829,7 @@ router.get('/sync/history', async (req, res) => {
   try {
     await ensureSchema();
     const { rows } = await getPool().query(
-      `SELECT started_at, finished_at, source, total, status, error
+      `SELECT started_at, finished_at, source, total, status, error, sprints_synced, sprint_issue_links
        FROM sync_history ORDER BY started_at DESC LIMIT 20`
     );
     res.json({
@@ -622,6 +840,8 @@ router.get('/sync/history', async (req, res) => {
         total: r.total,
         status: r.status,
         error: r.error,
+        sprintsSynced: r.sprints_synced,
+        sprintIssueLinks: r.sprint_issue_links,
       })),
     });
   } catch (err) {
