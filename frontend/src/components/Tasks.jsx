@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getTasks, getTaskFilters, exportTasksCsv } from '../api.js';
 import StatusBadge from './StatusBadge.jsx';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
-import MultiSelectFilter from './MultiSelectFilter.jsx';
+import FilterBar from './FilterBar.jsx';
 
 function formatDays(value) {
   return value == null ? '—' : `${value} дн`;
@@ -17,29 +17,14 @@ function useDebouncedValue(value, delayMs) {
   return debounced;
 }
 
-export default function Tasks({ jiraConnected, initialFilters }) {
+// Search stays local to this screen (not part of the shared filter set) —
+// it's a per-visit lookup, not a filter the user expects to carry over to
+// the Dashboard.
+export default function Tasks({ jiraConnected, filters, onFilterChange, onResetFilters }) {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
 
-  const [statusFilter, setStatusFilter] = useState(initialFilters?.status || []);
-  const [teamFilter, setTeamFilter] = useState(initialFilters?.team || []);
-  const [typeFilter, setTypeFilter] = useState(initialFilters?.type || []);
-  const [priorityFilter, setPriorityFilter] = useState(initialFilters?.priority || []);
-
-  // A dashboard widget's drill-down click passes a new initialFilters object
-  // (App.jsx) — apply it whenever that identity changes, overriding whatever
-  // the user had set locally, since arriving here is itself a filter action.
-  useEffect(() => {
-    if (!initialFilters) return;
-    setSearch('');
-    setStatusFilter(initialFilters.status || []);
-    setTeamFilter(initialFilters.team || []);
-    setTypeFilter(initialFilters.type || []);
-    setPriorityFilter(initialFilters.priority || []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialFilters]);
-
-  const [filterOptions, setFilterOptions] = useState({ statuses: [], teams: [], types: [], priorities: [] });
+  const [filterOptions, setFilterOptions] = useState({ statuses: [], teams: [], types: [], priorities: [], projects: [] });
   const [page, setPage] = useState(1);
   const [result, setResult] = useState({ items: [], total: 0, pageSize: 20, siteUrl: null });
   const [isLoading, setIsLoading] = useState(false);
@@ -50,12 +35,14 @@ export default function Tasks({ jiraConnected, initialFilters }) {
   const queryParams = useMemo(
     () => ({
       search: debouncedSearch || undefined,
-      status: statusFilter.length ? statusFilter : undefined,
-      team: teamFilter.length ? teamFilter : undefined,
-      type: typeFilter.length ? typeFilter : undefined,
-      priority: priorityFilter.length ? priorityFilter : undefined,
+      status: filters.status.length ? filters.status : undefined,
+      team: filters.team.length ? filters.team : undefined,
+      type: filters.type.length ? filters.type : undefined,
+      priority: filters.priority.length ? filters.priority : undefined,
+      project: filters.project.length ? filters.project : undefined,
+      periodDays: filters.period !== 'all' ? filters.period : undefined,
     }),
-    [debouncedSearch, statusFilter, teamFilter, typeFilter, priorityFilter]
+    [debouncedSearch, filters]
   );
 
   // Any filter/search change invalidates the current page.
@@ -136,19 +123,17 @@ export default function Tasks({ jiraConnected, initialFilters }) {
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex flex-wrap gap-3 items-center">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <input
           type="text"
           placeholder="Поиск по ключу и названию..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm flex-1 min-w-[220px]"
+          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
         />
-        <MultiSelectFilter label="Статус" options={filterOptions.statuses} selected={statusFilter} onChange={setStatusFilter} />
-        <MultiSelectFilter label="Команда" options={filterOptions.teams} selected={teamFilter} onChange={setTeamFilter} />
-        <MultiSelectFilter label="Тип" options={filterOptions.types} selected={typeFilter} onChange={setTypeFilter} />
-        <MultiSelectFilter label="Приоритет" options={filterOptions.priorities} selected={priorityFilter} onChange={setPriorityFilter} />
       </div>
+
+      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

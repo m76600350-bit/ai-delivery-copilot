@@ -5,6 +5,7 @@ import FieldMapping from './components/FieldMapping.jsx';
 import Tasks from './components/Tasks.jsx';
 import Settings from './components/Settings.jsx';
 import TopNav from './components/TopNav.jsx';
+import useSharedFilters from './useSharedFilters.js';
 import { getJiraStatus, getFieldMapping, syncJira, getJiraIssues } from './api.js';
 
 // /api/auth/callback redirects here with ?jira=connected once the OAuth flow
@@ -23,14 +24,16 @@ export default function App() {
   );
   const [showFieldMapping, setShowFieldMapping] = useState(false);
   const [justConnected, setJustConnected] = useState(readJustConnected);
-  // Set by a dashboard widget's drill-down row/cell click; Tasks.jsx applies
-  // it once (keyed off this object's identity) then it's just local state there.
-  const [taskFilterRequest, setTaskFilterRequest] = useState(null);
+  // Shared between Dashboard and Tasks (both read/write the same instance),
+  // and persisted to localStorage so it survives a reload too.
+  const { filters, updateFilter, replaceFilters, resetFilters } = useSharedFilters();
 
-  const navigateToTasks = useCallback((filters) => {
-    setTaskFilterRequest(filters);
+  // A dashboard widget's drill-down row/cell click replaces the whole shared
+  // filter set with the clicked dimension(s) and jumps to Задачи.
+  const navigateToTasks = useCallback((partialFilters) => {
+    replaceFilters(partialFilters);
     setActiveTab('tasks');
-  }, []);
+  }, [replaceFilters]);
 
   // assumeConnected: the ?jira=connected redirect already proved the OAuth
   // flow succeeded, so a transient failure of this status check shouldn't
@@ -139,6 +142,9 @@ export default function App() {
                     jiraConnected
                     onSyncJira={syncFromJira}
                     onNavigateToTasks={navigateToTasks}
+                    filters={filters}
+                    onFilterChange={updateFilter}
+                    onResetFilters={resetFilters}
                   />
                 ) : (
                   <div className="max-w-2xl mx-auto space-y-6">
@@ -159,7 +165,12 @@ export default function App() {
         )}
 
         {activeTab === 'tasks' && (
-          <Tasks jiraConnected={jiraStatus?.connected || false} initialFilters={taskFilterRequest} />
+          <Tasks
+            jiraConnected={jiraStatus?.connected || false}
+            filters={filters}
+            onFilterChange={updateFilter}
+            onResetFilters={resetFilters}
+          />
         )}
 
         {activeTab === 'settings' && (

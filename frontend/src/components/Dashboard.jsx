@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import WidgetDrilldown from './WidgetDrilldown.jsx';
-import MultiSelectFilter from './MultiSelectFilter.jsx';
+import FilterBar, { hasActiveFilters } from './FilterBar.jsx';
 import useSyncProgress from '../useSyncProgress.js';
 
 function syncButtonLabel(isSyncing, progress) {
@@ -10,15 +10,6 @@ function syncButtonLabel(isSyncing, progress) {
   }
   return 'Синхронизация...';
 }
-
-const PERIOD_OPTIONS = [
-  { value: 'all', label: 'Всё время' },
-  { value: '7', label: 'Последние 7 дней' },
-  { value: '30', label: 'Последние 30 дней' },
-  { value: '90', label: 'Последние 90 дней' },
-];
-
-const EMPTY_FILTERS = { project: [], team: [], type: [], status: [], priority: [], period: 'all' };
 
 function issueTeams(issue) {
   const source = issue.team || issue.labels || '';
@@ -101,11 +92,10 @@ const WIDGET_TITLES = {
   type: 'По типу',
 };
 
-export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigateToTasks }) {
+export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigateToTasks, filters, onFilterChange, onResetFilters }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [expandedWidget, setExpandedWidget] = useState(null);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
   const syncProgress = useSyncProgress(isSyncing);
 
   const allIssues = stats.issues || [];
@@ -148,16 +138,12 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
     });
   }, [allIssues, filters]);
 
-  const hasActiveFilters =
-    filters.project.length || filters.team.length || filters.type.length ||
-    filters.status.length || filters.priority.length || filters.period !== 'all';
+  const filtersActive = hasActiveFilters(filters);
 
   const filteredStats = useMemo(
-    () => (hasActiveFilters ? computeStats(filteredIssues) : stats),
-    [hasActiveFilters, filteredIssues, stats]
+    () => (filtersActive ? computeStats(filteredIssues) : stats),
+    [filtersActive, filteredIssues, stats]
   );
-
-  const updateFilter = (field, value) => setFilters((prev) => ({ ...prev, [field]: value }));
 
   const handleSyncJira = async (force = false) => {
     setIsSyncing(true);
@@ -227,31 +213,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
         <p className="text-sm text-red-600 -mt-4">{syncError}</p>
       )}
 
-      <div className="flex flex-wrap items-center gap-3 bg-white rounded-lg border border-gray-200 p-3">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Фильтры</span>
-        <MultiSelectFilter label="Проект" options={filterOptions.projects} selected={filters.project} onChange={(v) => updateFilter('project', v)} />
-        <MultiSelectFilter label="Команда" options={filterOptions.teams} selected={filters.team} onChange={(v) => updateFilter('team', v)} />
-        <MultiSelectFilter label="Тип задачи" options={filterOptions.types} selected={filters.type} onChange={(v) => updateFilter('type', v)} />
-        <MultiSelectFilter label="Статус" options={filterOptions.statuses} selected={filters.status} onChange={(v) => updateFilter('status', v)} />
-        <MultiSelectFilter label="Приоритет" options={filterOptions.priorities} selected={filters.priority} onChange={(v) => updateFilter('priority', v)} />
-        <select
-          value={filters.period}
-          onChange={(e) => updateFilter('period', e.target.value)}
-          className={`border rounded px-3 py-1.5 text-sm ${filters.period !== 'all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700'}`}
-        >
-          {PERIOD_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        {hasActiveFilters && (
-          <button
-            onClick={() => setFilters(EMPTY_FILTERS)}
-            className="text-xs text-blue-600 hover:underline"
-          >
-            Сбросить
-          </button>
-        )}
-      </div>
+      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard title="Всего задач" value={filteredStats.total} />

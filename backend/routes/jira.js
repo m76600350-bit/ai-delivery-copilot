@@ -814,6 +814,20 @@ function buildTaskFilters(query) {
     conditions.push(`COALESCE(priority, 'Без приоритета') = ANY($${params.length}::text[])`);
   }
 
+  const projects = toArray(query.project);
+  if (projects.length) {
+    params.push(projects);
+    conditions.push(`COALESCE(project, 'Без проекта') = ANY($${params.length}::text[])`);
+  }
+
+  // Mirrors the Dashboard/WidgetDrilldown "Период" filter, which also cuts
+  // by created_at rather than updated_at.
+  const periodDays = Math.max(0, Math.trunc(Number(query.periodDays)) || 0);
+  if (periodDays > 0) {
+    params.push(periodDays);
+    conditions.push(`created_at >= now() - ($${params.length}::int * INTERVAL '1 day')`);
+  }
+
   return { where: conditions.join(' AND '), params };
 }
 
@@ -948,7 +962,7 @@ router.get('/tasks/filters', async (req, res) => {
     await ensureSchema();
     const pool = getPool();
 
-    const [statuses, teams, types, priorities] = await Promise.all([
+    const [statuses, teams, types, priorities, projects] = await Promise.all([
       pool.query(
         `SELECT DISTINCT COALESCE(status, 'Без статуса') AS v FROM issues WHERE is_deleted = false ORDER BY v`
       ),
@@ -961,6 +975,9 @@ router.get('/tasks/filters', async (req, res) => {
       pool.query(
         `SELECT DISTINCT COALESCE(priority, 'Без приоритета') AS v FROM issues WHERE is_deleted = false ORDER BY v`
       ),
+      pool.query(
+        `SELECT DISTINCT COALESCE(project, 'Без проекта') AS v FROM issues WHERE is_deleted = false ORDER BY v`
+      ),
     ]);
 
     res.json({
@@ -968,6 +985,7 @@ router.get('/tasks/filters', async (req, res) => {
       teams: teams.rows.map((r) => r.v),
       types: types.rows.map((r) => r.v),
       priorities: priorities.rows.map((r) => r.v),
+      projects: projects.rows.map((r) => r.v),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
