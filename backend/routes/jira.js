@@ -748,9 +748,13 @@ router.get('/issues', async (req, res) => {
         leadTime: row.lead_time_days,
         reopenCount: row.reopen_count,
         createdAt: row.created_at,
+        updatedAt: row.updated_at,
         type: row.issue_type,
         sprint: row.sprint,
         storyPoints: row.story_points,
+        project: row.project,
+        priority: row.priority,
+        assignee: row.assignee,
       });
     }
 
