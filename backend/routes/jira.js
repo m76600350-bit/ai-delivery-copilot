@@ -28,92 +28,10 @@ async function getFieldMapping(cloudId) {
   return mapping;
 }
 
-// What POST /api/jira/sync pulls from Jira, set via Settings → "Фильтр
-// синхронизации" instead of the user hand-writing JQL. Empty arrays / a
-// null updatedSinceDays mean "no restriction on that dimension".
-async function getSyncFilter(cloudId) {
-  await ensureSchema();
-  const { rows } = await getPool().query('SELECT * FROM jira_sync_filter WHERE cloud_id = $1', [cloudId]);
-  const row = rows[0];
-  return {
-    projects: row?.projects || [],
-    issueTypes: row?.issue_types || [],
-    teams: row?.teams || [],
-    updatedSinceDays: row?.updated_since_days ?? null,
-  };
-}
-
-async function saveSyncFilter(cloudId, filter) {
-  await ensureSchema();
-  const updatedSinceDays =
-    filter.updatedSinceDays == null || filter.updatedSinceDays === ''
-      ? null
-      : Math.max(0, Math.trunc(Number(filter.updatedSinceDays)) || 0);
-
-  await getPool().query(
-    `INSERT INTO jira_sync_filter (cloud_id, projects, issue_types, teams, updated_since_days)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (cloud_id) DO UPDATE SET
-       projects = EXCLUDED.projects,
-       issue_types = EXCLUDED.issue_types,
-       teams = EXCLUDED.teams,
-       updated_since_days = EXCLUDED.updated_since_days`,
-    [
-      cloudId,
-      Array.isArray(filter.projects) ? filter.projects : [],
-      Array.isArray(filter.issueTypes) ? filter.issueTypes : [],
-      Array.isArray(filter.teams) ? filter.teams : [],
-      updatedSinceDays,
-    ]
-  );
-}
-
-// JQL escaping for a value inside a quoted string literal — backslash and
-// double-quote are the only characters JQL string literals require escaped.
-function jqlQuote(value) {
-  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
-
-function buildJqlFromFilter(filter) {
-  const clauses = [];
-  if (filter.projects?.length) {
-    clauses.push(`project in (${filter.projects.map(jqlQuote).join(',')})`);
-  }
-  if (filter.issueTypes?.length) {
-    clauses.push(`issuetype in (${filter.issueTypes.map(jqlQuote).join(',')})`);
-  }
-  if (filter.updatedSinceDays != null && filter.updatedSinceDays > 0) {
-    clauses.push(`updated >= -${filter.updatedSinceDays}d`);
-  }
-  return clauses.length ? `${clauses.join(' AND ')} ORDER BY updated DESC` : 'ORDER BY updated DESC';
-}
-
-// GET /rest/api/3/project/search — every project the connected account can
-// see, offered as options for the "Проект" filter dropdown.
-async function fetchJiraProjects(accessToken, cloudId) {
-  const projects = [];
-  let startAt = 0;
-  const maxResults = 50;
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const res = await fetch(
-      `${JIRA_API_BASE}/ex/jira/${cloudId}/rest/api/3/project/search?startAt=${startAt}&maxResults=${maxResults}`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
-    );
-    if (!res.ok) {
-      throw new Error(`Failed to list Jira projects: ${res.status} ${await res.text()}`);
-    }
-    const data = await res.json();
-    const values = data.values || [];
-    for (const p of values) projects.push({ key: p.key, name: p.name });
-
-    startAt += values.length;
-    if (data.isLast || values.length === 0 || startAt >= data.total) break;
-  }
-
-  return projects;
-}
+// The new /search/jql endpoint rejects a fully unbounded query ("Неограниченные
+// запросы JQL здесь не допускаются") — a plain "updated >= -Nd" satisfies that
+// check while still covering effectively all issues (10 years back).
+const SYNC_JQL = 'updated >= -3650d ORDER BY updated DESC';
 
 // GET/POST /rest/api/3/search replaced the deprecated /rest/api/3/search
 // endpoint (removed by Atlassian, returns 410 Gone). The new endpoint drops
@@ -529,14 +447,7 @@ router.post('/sync', async (req, res) => {
     const extraFields = CANONICAL_FIELDS.map((f) => fieldMapping[f]).filter(Boolean);
     const fields = [...new Set([...BASE_FIELDS, ...extraFields])];
 
-    // Project/type/updated-window come from Settings' "Фильтр синхронизации"
-    // and turn into JQL here; team can't reliably be expressed in JQL (its
-    // Jira field type — and whether it's even a real field vs. our labels
-    // fallback — varies per site), so it's applied client-side below instead.
-    const syncFilter = await getSyncFilter(cloudId);
-    const jql = buildJqlFromFilter(syncFilter);
-
-    const rawIssues = await fetchAllIssues(accessToken, cloudId, fields, jql);
+    const rawIssues = await fetchAllIssues(accessToken, cloudId, fields, SYNC_JQL);
     const statusCategoryByName = await fetchStatusCategoryMap(accessToken, cloudId);
 
     await setSyncProgress(pool, {
@@ -556,15 +467,6 @@ router.post('/sync', async (req, res) => {
       const mapped = mapJiraFields(raw, fieldMapping);
       if (!mapped.team) {
         mapped.team = mapped.labels || null;
-      }
-
-      // Team filter is applied here rather than in JQL (see comment above);
-      // a filtered-out issue still counts toward progress, just skips the
-      // DB round-trip and any changelog fetch.
-      if (syncFilter.teams.length && !syncFilter.teams.includes(mapped.team)) {
-        completed += 1;
-        await setSyncProgress(pool, { completed });
-        continue;
       }
 
       const { rows } = await pool.query('SELECT * FROM issues WHERE issue_key = $1', [mapped.issueKey]);
@@ -722,65 +624,6 @@ router.get('/sync/history', async (req, res) => {
         error: r.error,
       })),
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/jira/sync-filter — current sync filter plus the option lists for
-// each dropdown: live Jira projects, and issue types/teams actually present
-// in already-synced data (empty before the first sync).
-router.get('/sync-filter', async (req, res) => {
-  try {
-    const token = await getStoredToken();
-    if (!token) {
-      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
-    }
-
-    const filter = await getSyncFilter(token.cloud_id);
-    const pool = getPool();
-
-    const [issueTypesRes, teamsRes] = await Promise.all([
-      pool.query(
-        `SELECT DISTINCT issue_type FROM issues WHERE is_deleted = false AND issue_type IS NOT NULL ORDER BY issue_type`
-      ),
-      pool.query(`SELECT DISTINCT team FROM issues WHERE is_deleted = false AND team IS NOT NULL ORDER BY team`),
-    ]);
-
-    let projects = [];
-    try {
-      const { accessToken, cloudId } = await getValidAccessToken();
-      projects = await fetchJiraProjects(accessToken, cloudId);
-    } catch {
-      // Don't fail the whole settings screen over this — saved filter
-      // values and the other two dropdowns still render fine without it.
-    }
-
-    res.json({
-      filter,
-      options: {
-        projects,
-        issueTypes: issueTypesRes.rows.map((r) => r.issue_type),
-        teams: teamsRes.rows.map((r) => r.team),
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/jira/sync-filter — replaces the whole filter; applied by the
-// frontend on every dropdown change (no separate save step).
-router.post('/sync-filter', async (req, res) => {
-  try {
-    const token = await getStoredToken();
-    if (!token) {
-      return res.status(401).json({ error: 'Jira is not connected. Go to /api/auth/login first.' });
-    }
-
-    const { projects, issueTypes, teams, updatedSinceDays } = req.body || {};
-    await saveSyncFilter(token.cloud_id, { projects, issueTypes, teams, updatedSinceDays });
-    res.json({ ok: true, filter: await getSyncFilter(token.cloud_id) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

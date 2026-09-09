@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { jiraLoginUrl, getJiraIssues, getJiraStatus } from '../api.js';
 import FieldMapping from './FieldMapping.jsx';
-import SyncFilter from './SyncFilter.jsx';
 import SyncHistory from './SyncHistory.jsx';
 
 function domainFromSiteUrl(siteUrl) {
@@ -87,12 +86,7 @@ export default function Settings({ jiraStatus, onStatusChange, onDataLoaded }) {
         />
       )}
 
-      {jiraStatus?.connected && (
-        <>
-          <SyncFilter />
-          <SyncHistory onSynced={handleSynced} />
-        </>
-      )}
+      {jiraStatus?.connected && <SyncHistory onSynced={handleSynced} />}
     </div>
   );
 }

@@ -91,18 +91,6 @@ async function ensureSchema() {
         CONSTRAINT sync_progress_singleton CHECK (id = 1)
       );
 
-      -- Which projects/types/updated-window POST /api/jira/sync pulls from
-      -- Jira, configured via the Settings screen's "Фильтр синхронизации"
-      -- instead of the user hand-writing JQL. One row per connected site.
-      CREATE TABLE IF NOT EXISTS jira_sync_filter (
-        id SERIAL PRIMARY KEY,
-        cloud_id TEXT NOT NULL UNIQUE,
-        projects TEXT[] NOT NULL DEFAULT '{}',
-        issue_types TEXT[] NOT NULL DEFAULT '{}',
-        teams TEXT[] NOT NULL DEFAULT '{}',
-        updated_since_days INTEGER
-      );
-
       -- Append-only log of past sync runs, shown in Settings — distinct from
       -- sync_progress, which only ever holds the *current* run's state.
       CREATE TABLE IF NOT EXISTS sync_history (

@@ -71,14 +71,4 @@ export async function getSyncHistory() {
   return res.data;
 }
 
-export async function getSyncFilter() {
-  const res = await api.get('/jira/sync-filter');
-  return res.data;
-}
-
-export async function saveSyncFilter(filter) {
-  const res = await api.post('/jira/sync-filter', filter);
-  return res.data;
-}
-
 export default api;
