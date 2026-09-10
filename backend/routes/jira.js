@@ -433,51 +433,134 @@ router.post('/field-mapping', async (req, res) => {
   }
 });
 
-// GET /api/jira/wip-limits — every currently-used "indeterminate" status
-// (from already-synced data, not a hardcoded workflow list) plus whatever
-// limit has been configured for it. Global across teams — see wip_limits'
-// schema comment for why.
-router.get('/wip-limits', async (req, res) => {
+// GET /api/jira/team-roles — every (team, assignee) pair actually present in
+// already-synced issues, grouped by team, each with whatever role has been
+// assigned via team_roles (null if none — "роль не задана", and such
+// members are excluded from the WIP-limit sum in routes/teams.js).
+router.get('/team-roles', async (req, res) => {
   try {
     await ensureSchema();
     const pool = getPool();
-    const [{ rows: statusRows }, { rows: limitRows }] = await Promise.all([
+    const [{ rows: memberRows }, { rows: roleRows }] = await Promise.all([
       pool.query(
-        `SELECT DISTINCT status FROM issues WHERE is_deleted = false AND status_category = 'indeterminate' AND status IS NOT NULL ORDER BY status`
+        `SELECT DISTINCT COALESCE(team, 'Без команды') AS team, assignee
+         FROM issues WHERE is_deleted = false AND assignee IS NOT NULL
+         ORDER BY team, assignee`
       ),
-      pool.query('SELECT status_name, limit_value FROM wip_limits'),
+      pool.query('SELECT team, assignee_name, role FROM team_roles'),
     ]);
 
-    const limits = {};
-    for (const row of limitRows) limits[row.status_name] = row.limit_value;
+    const roleByKey = new Map(roleRows.map((r) => [`${r.team} ${r.assignee_name}`, r.role]));
+    const byTeam = new Map();
+    for (const { team, assignee } of memberRows) {
+      if (!byTeam.has(team)) byTeam.set(team, []);
+      byTeam.get(team).push({ assignee, role: roleByKey.get(`${team} ${assignee}`) || null });
+    }
 
-    res.json({ statuses: statusRows.map((r) => r.status), limits });
+    const teams = [...byTeam.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([team, members]) => ({ team, members }));
+
+    res.json({ teams });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/jira/wip-limits — body: { statusName, limitValue }. Upserts a
-// single status's limit (called on every field change from Settings, no
-// separate Save step); an empty/null limitValue clears the limit instead of
-// storing a meaningless row.
-router.post('/wip-limits', async (req, res) => {
+// POST /api/jira/team-roles — body: { team, assignee, role }. Upserts one
+// member's role; an empty/null role clears it back to "роль не задана"
+// instead of storing a meaningless row.
+router.post('/team-roles', async (req, res) => {
   try {
     await ensureSchema();
-    const { statusName, limitValue } = req.body || {};
-    if (!statusName) {
-      return res.status(400).json({ error: 'statusName is required' });
+    const { team, assignee, role } = req.body || {};
+    if (!team || !assignee) {
+      return res.status(400).json({ error: 'team and assignee are required' });
     }
 
     const pool = getPool();
-    if (limitValue == null || limitValue === '') {
-      await pool.query('DELETE FROM wip_limits WHERE status_name = $1', [statusName]);
+    if (!role || !role.trim()) {
+      await pool.query('DELETE FROM team_roles WHERE team = $1 AND assignee_name = $2', [team, assignee]);
     } else {
-      const parsed = Math.max(0, Math.trunc(Number(limitValue)) || 0);
       await pool.query(
-        `INSERT INTO wip_limits (status_name, limit_value) VALUES ($1, $2)
-         ON CONFLICT (status_name) DO UPDATE SET limit_value = EXCLUDED.limit_value`,
-        [statusName, parsed]
+        `INSERT INTO team_roles (team, assignee_name, role) VALUES ($1, $2, $3)
+         ON CONFLICT (team, assignee_name) DO UPDATE SET role = EXCLUDED.role`,
+        [team, assignee, role.trim()]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jira/wip-limits?team=... — everything the "Настройка WIP" modal
+// needs for one team once it's been picked in step 1: that team's
+// currently-used indeterminate statuses, the roles already assigned to its
+// members (team_roles), and whatever (status, role, limit) rows already
+// exist for it.
+router.get('/wip-limits', async (req, res) => {
+  try {
+    await ensureSchema();
+    const team = req.query.team;
+    if (!team) {
+      return res.status(400).json({ error: 'team is required' });
+    }
+
+    const pool = getPool();
+    const [{ rows: statusRows }, { rows: roleRows }, { rows: limitRows }] = await Promise.all([
+      pool.query(
+        `SELECT DISTINCT status FROM issues
+         WHERE is_deleted = false AND status_category = 'indeterminate' AND status IS NOT NULL
+           AND COALESCE(team, 'Без команды') = $1
+         ORDER BY status`,
+        [team]
+      ),
+      pool.query('SELECT DISTINCT role FROM team_roles WHERE team = $1 ORDER BY role', [team]),
+      pool.query(
+        'SELECT status_name, role, limit_value FROM wip_limits WHERE team = $1 ORDER BY status_name, role',
+        [team]
+      ),
+    ]);
+
+    res.json({
+      statuses: statusRows.map((r) => r.status),
+      roles: roleRows.map((r) => r.role),
+      limits: limitRows.map((r) => ({ statusName: r.status_name, role: r.role, limitValue: r.limit_value })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/jira/wip-limits — body: { team, entries: [{ statusName, role,
+// limitValue }, ...] }. The modal's explicit "Сохранить" replaces this
+// team's whole WIP config at once (delete-then-insert), rather than
+// per-field autosave — a one-off modal action, unlike the rest of Settings.
+router.post('/wip-limits', async (req, res) => {
+  try {
+    await ensureSchema();
+    const { team, entries } = req.body || {};
+    if (!team) {
+      return res.status(400).json({ error: 'team is required' });
+    }
+
+    const pool = getPool();
+    await pool.query('DELETE FROM wip_limits WHERE team = $1', [team]);
+
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const statusName = entry?.statusName;
+      const role = entry?.role;
+      if (!statusName || !role) continue;
+      const limitValue =
+        entry.limitValue == null || entry.limitValue === ''
+          ? null
+          : Math.max(0, Math.trunc(Number(entry.limitValue)) || 0);
+      await pool.query(
+        `INSERT INTO wip_limits (team, status_name, role, limit_value) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (team, status_name, role) DO UPDATE SET limit_value = EXCLUDED.limit_value`,
+        [team, statusName, role, limitValue]
       );
     }
 

@@ -93,7 +93,7 @@ router.get('/', async (req, res) => {
       conditions.push(`COALESCE(team, 'Без команды') = ANY($${params.length}::text[])`);
     }
 
-    const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }] = await Promise.all([
+    const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }, { rows: roleRows }] = await Promise.all([
       pool.query(
         `SELECT id, issue_key, COALESCE(team, 'Без команды') AS team, project, issue_type, status,
                 status_category, cycle_time, resolved_at, story_points, assignee, updated_at, created_at
@@ -106,11 +106,24 @@ router.get('/', async (req, res) => {
         `SELECT issue_id, link_type, linked_issue_status_category FROM issue_links
          WHERE link_type ILIKE '%blocked by%'`
       ),
-      pool.query('SELECT status_name, limit_value FROM wip_limits WHERE limit_value IS NOT NULL'),
+      pool.query('SELECT team, status_name, role, limit_value FROM wip_limits WHERE limit_value IS NOT NULL'),
+      pool.query('SELECT team, role, count(*)::int AS headcount FROM team_roles GROUP BY team, role'),
     ]);
 
-    const wipLimitSum = limitRows.reduce((total, r) => total + (r.limit_value || 0), 0);
-    const wipLimitsConfigured = limitRows.length > 0;
+    // A team's overall WIP limit = sum over its wip_limits rows of
+    // limit_value * how many of its members currently have that role
+    // (team_roles) — not a flat per-status number, and not global.
+    const headcountByTeamRole = new Map(roleRows.map((r) => [`${r.team} ${r.role}`, r.headcount]));
+    const limitsByTeam = new Map();
+    for (const row of limitRows) {
+      if (!limitsByTeam.has(row.team)) limitsByTeam.set(row.team, []);
+      limitsByTeam.get(row.team).push(row);
+    }
+    const wipLimitSumForTeam = (team) => {
+      const rows = limitsByTeam.get(team) || [];
+      return rows.reduce((total, r) => total + (r.limit_value || 0) * (headcountByTeamRole.get(`${team} ${r.role}`) || 0), 0);
+    };
+    const hasAnyRoleAssignedForTeam = (team) => roleRows.some((r) => r.team === team && r.headcount > 0);
 
     const sprintsById = new Map(sprints.map((s) => [s.id, s]));
     const issuesById = new Map(issues.map((i) => [i.id, i]));
@@ -169,6 +182,9 @@ router.get('/', async (req, res) => {
 
       const blockersCount = teamIssues.filter((i) => blockedIssueIds.has(i.id)).length;
 
+      const wipLimitSum = wipLimitSumForTeam(team);
+      const wipLimitConfigured = limitsByTeam.has(team) && hasAnyRoleAssignedForTeam(team);
+
       // This team's sprints, restricted to those with at least one in-scope
       // issue belonging to the team.
       const teamSprintIds = new Set();
@@ -203,8 +219,8 @@ router.get('/', async (req, res) => {
       const signals = [];
 
       if (hasEnoughCompleted && hasSprintHistory) {
-        // Signal 1: current WIP vs. the (global) configured limit.
-        if (wipLimitSum > 0) {
+        // Signal 1: current WIP vs. this team's configured limit.
+        if (wipLimitConfigured && wipLimitSum > 0) {
           const ratio = wipCount / wipLimitSum;
           signals.push({ name: 'wip', ratio, triggered: ratio > 1.0 });
         }
@@ -307,7 +323,7 @@ router.get('/', async (req, res) => {
       return {
         team,
         peopleCount,
-        wip: { count: wipCount, limit: wipLimitsConfigured ? wipLimitSum : null },
+        wip: { count: wipCount, limit: wipLimitConfigured ? wipLimitSum : null },
         velocitySp: velocitySpValue,
         cycleTimeAvg,
         bugRatePct,
@@ -321,7 +337,7 @@ router.get('/', async (req, res) => {
       };
     });
 
-    res.json({ teams, wipLimitsConfigured });
+    res.json({ teams });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

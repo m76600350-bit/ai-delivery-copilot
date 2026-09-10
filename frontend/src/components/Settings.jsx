@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { jiraLoginUrl, getJiraIssues, getJiraStatus } from '../api.js';
 import FieldMapping from './FieldMapping.jsx';
 import SyncHistory from './SyncHistory.jsx';
-import WipLimits from './WipLimits.jsx';
+import TeamRoles from './TeamRoles.jsx';
+import WipLimitsModal from './WipLimitsModal.jsx';
 
 function domainFromSiteUrl(siteUrl) {
   if (!siteUrl) return null;
@@ -87,7 +88,8 @@ export default function Settings({ jiraStatus, onStatusChange, onDataLoaded }) {
         />
       )}
 
-      {jiraStatus?.connected && <WipLimits />}
+      {jiraStatus?.connected && <TeamRoles />}
+      {jiraStatus?.connected && <WipLimitsModal />}
       {jiraStatus?.connected && <SyncHistory onSynced={handleSynced} />}
     </div>
   );

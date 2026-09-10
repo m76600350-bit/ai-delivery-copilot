@@ -71,13 +71,23 @@ export async function getSyncHistory() {
   return res.data;
 }
 
-export async function getWipLimits() {
-  const res = await api.get('/jira/wip-limits');
+export async function getTeamRoles() {
+  const res = await api.get('/jira/team-roles');
   return res.data;
 }
 
-export async function saveWipLimit(statusName, limitValue) {
-  const res = await api.post('/jira/wip-limits', { statusName, limitValue });
+export async function saveTeamRole(team, assignee, role) {
+  const res = await api.post('/jira/team-roles', { team, assignee, role });
+  return res.data;
+}
+
+export async function getWipLimitsForTeam(team) {
+  const res = await api.get('/jira/wip-limits', { params: { team } });
+  return res.data;
+}
+
+export async function saveWipLimitsForTeam(team, entries) {
+  const res = await api.post('/jira/wip-limits', { team, entries });
   return res.data;
 }
 

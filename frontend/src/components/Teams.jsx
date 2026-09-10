@@ -25,6 +25,22 @@ function fmtPct(value) {
   return value == null ? '—' : `${Math.round(value)}%`;
 }
 
+function WipCell({ wip }) {
+  if (wip.limit == null) {
+    return <span>{wip.count}</span>;
+  }
+  const ratio = wip.limit > 0 ? wip.count / wip.limit : 0;
+  const barColor = ratio > 1 ? 'bg-red-500' : ratio >= 0.8 ? 'bg-yellow-500' : 'bg-blue-500';
+  return (
+    <div className="flex items-center gap-2 min-w-[120px]">
+      <div className="w-16 bg-gray-100 rounded h-1.5 shrink-0">
+        <div className={`h-1.5 rounded ${barColor}`} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+      </div>
+      <span className="whitespace-nowrap">{wip.count} / {wip.limit}</span>
+    </div>
+  );
+}
+
 function HealthBadge({ health }) {
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${HEALTH_CLASS[health] || HEALTH_CLASS.insufficient_data}`}>
@@ -202,7 +218,7 @@ function SprintHealthTable({ teams }) {
 export default function Teams({ jiraConnected }) {
   const [filters, setFilters] = useState({ sprint: [], team: [], project: [] });
   const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], projects: [] });
-  const [report, setReport] = useState({ teams: [], wipLimitsConfigured: false });
+  const [report, setReport] = useState({ teams: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedTeam, setExpandedTeam] = useState(null);
@@ -275,9 +291,9 @@ export default function Teams({ jiraConnected }) {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {!report.wipLimitsConfigured && (
+      {report.teams.length > 0 && report.teams.every((t) => t.wip.limit == null) && (
         <p className="text-xs text-gray-400 italic">
-          WIP-лимиты не настроены — колонка «Загрузка» показывает только текущее число задач, без дроби. Настроить можно в «Настройках».
+          WIP-лимиты не настроены ни для одной команды — колонка «Загрузка» показывает только текущее число задач, без дроби. Настроить можно в «Настройках» (роли участников + «Настройка WIP»).
         </p>
       )}
 
@@ -306,7 +322,7 @@ export default function Teams({ jiraConnected }) {
                   <td className="py-2 px-4 font-medium text-gray-700">{t.team}</td>
                   <td className="py-2 px-4">{t.peopleCount}</td>
                   <td className="py-2 px-4">
-                    {t.wip.limit != null ? `${t.wip.count} / ${t.wip.limit}` : t.wip.count}
+                    <WipCell wip={t.wip} />
                   </td>
                   <td className="py-2 px-4">{t.velocitySp ?? '—'}</td>
                   <td className="py-2 px-4">{t.cycleTimeAvg != null ? `${fmtNum(t.cycleTimeAvg)} д` : '—'}</td>

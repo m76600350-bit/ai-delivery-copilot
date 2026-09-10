@@ -155,13 +155,51 @@ async function ensureSchema() {
 
       CREATE INDEX IF NOT EXISTS idx_issue_links_issue_id ON issue_links(issue_id);
 
-      -- Manually configured per-status WIP limits (Настройки → "WIP-лимиты"),
-      -- global across teams — a team's effective limit is the sum of these
-      -- over whichever indeterminate statuses are in play. NULL/absent means
-      -- "no limit set" for that status.
+      -- One row per (team, assignee) — the role assigned via Настройки →
+      -- "Команды и роли". A missing row means "роль не задана"; such members
+      -- are excluded from the WIP-limit sum in routes/teams.js.
+      CREATE TABLE IF NOT EXISTS team_roles (
+        id SERIAL PRIMARY KEY,
+        team TEXT NOT NULL,
+        assignee_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        UNIQUE (team, assignee_name)
+      );
+
+      -- One-time migration: the very first version of wip_limits (global,
+      -- one row per status, no team/role) predates the per-team/per-role
+      -- redesign below and is structurally incompatible with it — drop it
+      -- once, identified by having status_name but no team column, before
+      -- the CREATE TABLE IF NOT EXISTS below runs, so that statement always
+      -- ends up creating (or already finding) the new schema. This never
+      -- fires again once the table is on the new schema.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'wip_limits' AND column_name = 'status_name'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'wip_limits' AND column_name = 'team'
+        ) THEN
+          DROP TABLE wip_limits;
+        END IF;
+      END $$;
+
+      -- Per-(team, status, role) WIP-per-person limit, configured via the
+      -- "Настройка WIP" modal in Настройки. A team's overall limit (used in
+      -- the "Команды" table and the WIP health signal) is the sum, over
+      -- every row for that team, of limit_value * how many of that team's
+      -- members currently have that role in team_roles — NOT a flat
+      -- per-status limit the way the first cut of this feature had it, and
+      -- not global across teams either.
       CREATE TABLE IF NOT EXISTS wip_limits (
-        status_name TEXT PRIMARY KEY,
-        limit_value INTEGER
+        id SERIAL PRIMARY KEY,
+        team TEXT NOT NULL,
+        status_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        limit_value INTEGER,
+        UNIQUE (team, status_name, role)
       );
 
       -- Backfills columns on tables created before they existed.
