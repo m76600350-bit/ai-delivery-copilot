@@ -4,6 +4,7 @@ import JiraPanel from './components/JiraPanel.jsx';
 import FieldMapping from './components/FieldMapping.jsx';
 import Tasks from './components/Tasks.jsx';
 import Teams from './components/Teams.jsx';
+import Sprints from './components/Sprints.jsx';
 import Settings from './components/Settings.jsx';
 import TopNav from './components/TopNav.jsx';
 import useSharedFilters from './useSharedFilters.js';
@@ -175,6 +176,8 @@ export default function App() {
         )}
 
         {activeTab === 'teams' && <Teams jiraConnected={jiraStatus?.connected || false} />}
+
+        {activeTab === 'sprints' && <Sprints jiraConnected={jiraStatus?.connected || false} />}
 
         {activeTab === 'settings' && (
           <Settings jiraStatus={jiraStatus} onStatusChange={setJiraStatus} onDataLoaded={setStats} />

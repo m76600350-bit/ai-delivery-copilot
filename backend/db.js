@@ -202,6 +202,26 @@ async function ensureSchema() {
         UNIQUE (team, status_name, role)
       );
 
+      -- One row per point where an issue's status *category* changed —
+      -- the first row for an issue is a synthetic "genesis" entry at
+      -- created_at with whatever category it started in, every other row
+      -- is a real changelog transition. This is what lets the Спринты
+      -- screen reconstruct "what category was this issue in as of day D"
+      -- (burndown/CFD) without re-fetching changelog: take the last row
+      -- with changed_at <= D. Built from the same changelog replay as
+      -- cycle_time/status_time_breakdown (see computeLeadCycleReopen),
+      -- rebuilt from scratch (delete then re-insert) whenever that replay
+      -- actually runs — same as issue_links.
+      CREATE TABLE IF NOT EXISTS issue_status_events (
+        id SERIAL PRIMARY KEY,
+        issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+        changed_at TIMESTAMPTZ NOT NULL,
+        status TEXT,
+        status_category TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_issue_status_events_issue_id ON issue_status_events(issue_id, changed_at);
+
       -- Backfills columns on tables created before they existed.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS story_points NUMERIC;
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS lead_time_days NUMERIC;

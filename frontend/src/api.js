@@ -101,4 +101,14 @@ export async function getTeamsReport(params) {
   return res.data;
 }
 
+export async function getSprintsFilters() {
+  const res = await api.get('/sprints/filters');
+  return res.data;
+}
+
+export async function getSprintsReport(params) {
+  const res = await api.get('/sprints/report', { params });
+  return res.data;
+}
+
 export default api;

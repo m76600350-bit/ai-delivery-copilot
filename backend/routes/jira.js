@@ -341,11 +341,22 @@ function computeLeadCycleReopen({
     days: roundDays(ms),
   }));
 
+  // One entry per segment boundary — "what status did the issue enter, and
+  // when" — used by the Спринты screen to reconstruct burndown/CFD state as
+  // of any given day (find the last entry with at <= that day). The first
+  // entry (at createdAt) is a synthetic "genesis" state, not a real
+  // changelog transition.
+  const statusTimeline = segments.map((seg) => ({
+    at: seg.start,
+    status: seg.statusName,
+    category: categoryOf(seg.statusId, seg.statusName),
+  }));
+
   if (!resolvedAt) {
     if (debug) {
       console.log(`[cycle-time] ${issueKey}: unresolved, skipping cycle time (lead=${leadTimeDays})`);
     }
-    return { leadTimeDays: null, cycleTimeDays: null, reopenCount, statusTimeBreakdown };
+    return { leadTimeDays: null, cycleTimeDays: null, reopenCount, statusTimeBreakdown, statusTimeline };
   }
 
   let cycleMs = 0;
@@ -377,7 +388,7 @@ function computeLeadCycleReopen({
     console.log(`[cycle-time] ${issueKey}: cycleTimeDays=${roundDays(cycleMs)} leadTimeDays=${leadTimeDays} reopenCount=${reopenCount}`);
   }
 
-  return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount, statusTimeBreakdown };
+  return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount, statusTimeBreakdown, statusTimeline };
 }
 
 // GET /api/jira/fields — lists every field on the connected Jira site
@@ -864,6 +875,7 @@ router.post('/sync', async (req, res) => {
       let cycleTimeDays = existing?.cycle_time ?? null;
       let reopenCount = existing?.reopen_count ?? 0;
       let statusTimeBreakdown = existing?.status_time_breakdown ?? null;
+      let statusTimeline = null;
 
       if (needsHistory) {
         const histories = await fetchChangelog(accessToken, cloudId, mapped.issueKey);
@@ -881,6 +893,7 @@ router.post('/sync', async (req, res) => {
         cycleTimeDays = computed.cycleTimeDays;
         reopenCount = computed.reopenCount;
         statusTimeBreakdown = computed.statusTimeBreakdown;
+        statusTimeline = computed.statusTimeline;
       }
 
       const statusTimeBreakdownParam = statusTimeBreakdown ? JSON.stringify(statusTimeBreakdown) : null;
@@ -949,6 +962,19 @@ router.post('/sync', async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [issueRowId, linkedRows[0]?.id || null, link.linkedIssueKey, link.linkType, link.linkedIssueStatus, link.linkedIssueStatusCategory]
         );
+      }
+
+      // Rebuilt from scratch only when the changelog was actually refetched
+      // (needsHistory) — when it was skipped, the existing rows are still
+      // correct (nothing that could change them happened) and are left alone.
+      if (needsHistory) {
+        await pool.query('DELETE FROM issue_status_events WHERE issue_id = $1', [issueRowId]);
+        for (const entry of statusTimeline || []) {
+          await pool.query(
+            `INSERT INTO issue_status_events (issue_id, changed_at, status, status_category) VALUES ($1, $2, $3, $4)`,
+            [issueRowId, entry.at, entry.status, entry.category]
+          );
+        }
       }
 
       completed += 1;
