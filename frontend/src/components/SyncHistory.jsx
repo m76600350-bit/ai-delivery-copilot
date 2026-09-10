@@ -15,17 +15,21 @@ function syncButtonLabel(isSyncing, progress) {
   return 'Синхронизация...';
 }
 
+const VISIBLE_ROWS = 5;
+
 export default function SyncHistory({ onSynced }) {
   const [history, setHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState(null);
+  const [showAll, setShowAll] = useState(false);
   const progress = useSyncProgress(isSyncing);
 
   const loadHistory = async () => {
     try {
       const data = await getSyncHistory();
       setHistory(data.items);
+      setShowAll(false);
     } catch (err) {
       setError(err.response?.data?.error || 'Не удалось загрузить историю синхронизаций');
     } finally {
@@ -82,7 +86,7 @@ export default function SyncHistory({ onSynced }) {
               </tr>
             </thead>
             <tbody>
-              {history.map((run, idx) => (
+              {(showAll ? history : history.slice(0, VISIBLE_ROWS)).map((run, idx) => (
                 <tr key={idx} className="border-b border-gray-100">
                   <td className="py-2 pr-4 whitespace-nowrap">{formatDate(run.startedAt)}</td>
                   <td className="py-2 pr-4 whitespace-nowrap">{run.source}</td>
@@ -105,6 +109,15 @@ export default function SyncHistory({ onSynced }) {
               ))}
             </tbody>
           </table>
+
+          {history.length > VISIBLE_ROWS && (
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              className="mt-2 text-xs text-blue-600 hover:underline"
+            >
+              {showAll ? 'Свернуть' : `Показать ещё ${history.length - VISIBLE_ROWS}`}
+            </button>
+          )}
         </div>
       )}
     </div>
