@@ -209,6 +209,14 @@ async function ensureSchema() {
       ALTER TABLE jira_tokens ADD COLUMN IF NOT EXISTS site_url TEXT;
       ALTER TABLE sync_history ADD COLUMN IF NOT EXISTS sprints_synced INTEGER;
       ALTER TABLE sync_history ADD COLUMN IF NOT EXISTS sprint_issue_links INTEGER;
+      -- Per-status total time spent, computed from the same changelog replay
+      -- as cycle_time (see computeLeadCycleReopen) — [{status, days}] in
+      -- chronological order of first entering each status. NULL means it
+      -- hasn't been computed for this issue yet (changelog fetch failed or
+      -- predates this column), not "zero time anywhere" — the Задачи detail
+      -- panel hides the block entirely in that case rather than showing an
+      -- empty/misleading list.
+      ALTER TABLE issues ADD COLUMN IF NOT EXISTS status_time_breakdown JSONB;
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

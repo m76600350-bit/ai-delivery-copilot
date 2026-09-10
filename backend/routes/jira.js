@@ -307,14 +307,12 @@ function computeLeadCycleReopen({
       ? roundDays(new Date(resolvedAt).getTime() - new Date(createdAt).getTime())
       : null;
 
-  if (!resolvedAt) {
-    if (debug) {
-      console.log(`[cycle-time] ${issueKey}: unresolved, skipping cycle time (lead=${leadTimeDays})`);
-    }
-    return { leadTimeDays: null, cycleTimeDays: null, reopenCount };
-  }
-
-  // Replay transitions into contiguous [status, start, end) segments.
+  // Replay transitions into contiguous [status, start, end) segments, ending
+  // at resolution or — for an issue still open — right now, so both an
+  // unresolved issue's "time in current status" and a resolved one's full
+  // history are covered by the same pass. Used for statusTimeBreakdown
+  // below regardless of resolution state, and for cycleMs only when resolved.
+  const endTime = resolvedAt || new Date().toISOString();
   const segments = [];
   let segStart = createdAt;
   let segId = statusEvents.length ? statusEvents[0].fromId : currentStatusId;
@@ -326,7 +324,29 @@ function computeLeadCycleReopen({
     segId = ev.toId;
     segName = ev.toName;
   }
-  segments.push({ statusId: segId, statusName: segName, start: segStart, end: resolvedAt });
+  segments.push({ statusId: segId, statusName: segName, start: segStart, end: endTime });
+
+  // Total time per status name, summed across every visit (reopens
+  // included) — a Map so the first status entered keeps insertion order,
+  // giving the chronological ordering the Задачи detail panel wants.
+  const breakdownMs = new Map();
+  for (const seg of segments) {
+    if (!seg.statusName) continue;
+    const ms = new Date(seg.end).getTime() - new Date(seg.start).getTime();
+    if (ms <= 0) continue;
+    breakdownMs.set(seg.statusName, (breakdownMs.get(seg.statusName) || 0) + ms);
+  }
+  const statusTimeBreakdown = [...breakdownMs.entries()].map(([status, ms]) => ({
+    status,
+    days: roundDays(ms),
+  }));
+
+  if (!resolvedAt) {
+    if (debug) {
+      console.log(`[cycle-time] ${issueKey}: unresolved, skipping cycle time (lead=${leadTimeDays})`);
+    }
+    return { leadTimeDays: null, cycleTimeDays: null, reopenCount, statusTimeBreakdown };
+  }
 
   let cycleMs = 0;
   let hasStartedWork = false;
@@ -357,7 +377,7 @@ function computeLeadCycleReopen({
     console.log(`[cycle-time] ${issueKey}: cycleTimeDays=${roundDays(cycleMs)} leadTimeDays=${leadTimeDays} reopenCount=${reopenCount}`);
   }
 
-  return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount };
+  return { leadTimeDays, cycleTimeDays: roundDays(cycleMs), reopenCount, statusTimeBreakdown };
 }
 
 // GET /api/jira/fields — lists every field on the connected Jira site
@@ -843,6 +863,7 @@ router.post('/sync', async (req, res) => {
       let leadTimeDays = existing?.lead_time_days ?? null;
       let cycleTimeDays = existing?.cycle_time ?? null;
       let reopenCount = existing?.reopen_count ?? 0;
+      let statusTimeBreakdown = existing?.status_time_breakdown ?? null;
 
       if (needsHistory) {
         const histories = await fetchChangelog(accessToken, cloudId, mapped.issueKey);
@@ -859,7 +880,10 @@ router.post('/sync', async (req, res) => {
         leadTimeDays = computed.leadTimeDays;
         cycleTimeDays = computed.cycleTimeDays;
         reopenCount = computed.reopenCount;
+        statusTimeBreakdown = computed.statusTimeBreakdown;
       }
+
+      const statusTimeBreakdownParam = statusTimeBreakdown ? JSON.stringify(statusTimeBreakdown) : null;
 
       let issueRowId;
       if (!existing) {
@@ -868,15 +892,15 @@ router.post('/sync', async (req, res) => {
              issue_key, project, issue_type, summary, status, status_category,
              priority, assignee, team, created_at, updated_at, started_at,
              resolved_at, cycle_time, lead_time_days, reopen_count, sprint,
-             story_points, labels, last_synced_at, is_deleted
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now(), false)
+             story_points, labels, status_time_breakdown, last_synced_at, is_deleted
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now(), false)
            RETURNING id`,
           [
             mapped.issueKey, mapped.project, mapped.issueType, mapped.summary,
             mapped.status, mapped.statusCategory, mapped.priority, mapped.assignee,
             mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
             mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
-            mapped.storyPoints, mapped.labels,
+            mapped.storyPoints, mapped.labels, statusTimeBreakdownParam,
           ]
         );
         issueRowId = insertedRows[0].id;
@@ -900,13 +924,13 @@ router.post('/sync', async (req, res) => {
              project = $1, issue_type = $2, summary = $3, status = $4, status_category = $5,
              priority = $6, assignee = $7, team = $8, created_at = $9, updated_at = $10, started_at = $11,
              resolved_at = $12, cycle_time = $13, lead_time_days = $14, reopen_count = $15, sprint = $16,
-             story_points = $17, labels = $18, last_synced_at = now()
-           WHERE id = $19`,
+             story_points = $17, labels = $18, status_time_breakdown = $19, last_synced_at = now()
+           WHERE id = $20`,
           [
             mapped.project, mapped.issueType, mapped.summary, mapped.status, mapped.statusCategory,
             mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
             mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
-            mapped.storyPoints, mapped.labels, existing.id,
+            mapped.storyPoints, mapped.labels, statusTimeBreakdownParam, existing.id,
           ]
         );
         issueRowId = existing.id;
@@ -1260,6 +1284,10 @@ function withDaysInStatus(row) {
     labels: row.labels,
     lastSyncedAt: row.last_synced_at,
     daysInStatus,
+    // null (not fetched/computed yet) vs. an array — the detail panel hides
+    // the "Время в статусах" block entirely for null rather than showing it
+    // empty or wrong; see the status_time_breakdown column comment in db.js.
+    statusTimeBreakdown: row.status_time_breakdown,
   };
 }
 
@@ -1275,7 +1303,7 @@ const TASK_LIST_SELECT = `
     COALESCE(team, 'Без команды') AS team,
     created_at, updated_at, started_at, resolved_at, cycle_time,
     lead_time_days, reopen_count,
-    sprint, story_points, labels, last_synced_at
+    sprint, story_points, labels, status_time_breakdown, last_synced_at
   FROM issues
 `;
 

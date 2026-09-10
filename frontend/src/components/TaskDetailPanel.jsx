@@ -71,6 +71,23 @@ export default function TaskDetailPanel({ task, siteUrl, onClose }) {
           <Field label="Завершена">{formatDate(task.resolvedAt)}</Field>
           <Field label="Последняя синхронизация">{formatDate(task.lastSyncedAt)}</Field>
         </div>
+
+        {/* Hidden entirely (not shown empty/broken) when the changelog
+            behind it hasn't been computed for this issue — see the
+            statusTimeBreakdown comment on withDaysInStatus in routes/jira.js. */}
+        {task.statusTimeBreakdown && task.statusTimeBreakdown.length > 0 && (
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-xs text-gray-400 mb-2">Время в статусах</p>
+            <div className="space-y-1.5">
+              {task.statusTimeBreakdown.map((entry) => (
+                <div key={entry.status} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700">{entry.status}</span>
+                  <span className="text-gray-500">{entry.days.toFixed(2)} дн</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
