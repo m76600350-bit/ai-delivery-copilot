@@ -89,27 +89,30 @@ export default function SyncHistory({ onSynced }) {
             <tbody>
               {(showAll ? history : history.slice(0, VISIBLE_ROWS)).map((run, idx) => {
                 // sprintsSynced/sprintIssueLinks come from a best-effort step
-                // that runs after the main issue sync (see routes/jira.js) —
-                // it can fail (e.g. missing Jira Agile-API scope) even when
-                // the overall run is otherwise "успешно", so that failure
-                // needs its own visible signal instead of hiding behind a
-                // green badge that only shows a tooltip on "ошибка" rows.
-                const sprintFailed = run.status === 'success' && !run.sprintsSynced && run.error;
+                // that runs after the main issue sync (see routes/jira.js),
+                // itself made of several sub-steps (boards → sprints → each
+                // sprint's issues) — any of them can fail on its own (e.g. a
+                // missing Jira Agile-API scope for that specific resource)
+                // even when the overall run is otherwise "успешно" and
+                // earlier sub-steps succeeded (sprintsSynced > 0 doesn't
+                // imply sprintIssueLinks also succeeded), so any leftover
+                // error is always surfaced here rather than only when the
+                // count is zero.
+                const sprintFailed = run.status === 'success' && run.error;
                 return (
                   <tr key={idx} className="border-b border-gray-100">
                     <td className="py-2 pr-4 whitespace-nowrap">{formatDate(run.startedAt)}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">{run.source}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">{run.total ?? '—'}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">
-                      {sprintFailed ? (
+                      {run.sprintsSynced ?? '—'} спринтов, {run.sprintIssueLinks ?? '—'} связей
+                      {sprintFailed && (
                         <span
-                          className="inline-flex items-center gap-1 text-amber-700 cursor-help"
-                          title={`Не удалось синхронизировать спринты: ${run.error}`}
+                          className="inline-flex items-center gap-1 text-amber-700 cursor-help ml-1"
+                          title={`Синхронизация спринтов завершилась с ошибкой: ${run.error}`}
                         >
-                          0 ⚠
+                          ⚠
                         </span>
-                      ) : (
-                        run.sprintsSynced ?? '—'
                       )}
                     </td>
                     <td className="py-2 pr-4 whitespace-nowrap">
