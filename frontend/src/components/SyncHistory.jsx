@@ -82,31 +82,53 @@ export default function SyncHistory({ onSynced }) {
                 <th className="py-2 pr-4">Время</th>
                 <th className="py-2 pr-4">Источник</th>
                 <th className="py-2 pr-4">Задач</th>
+                <th className="py-2 pr-4">Спринтов</th>
                 <th className="py-2 pr-4">Итог</th>
               </tr>
             </thead>
             <tbody>
-              {(showAll ? history : history.slice(0, VISIBLE_ROWS)).map((run, idx) => (
-                <tr key={idx} className="border-b border-gray-100">
-                  <td className="py-2 pr-4 whitespace-nowrap">{formatDate(run.startedAt)}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{run.source}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{run.total ?? '—'}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    {run.status === 'success' ? (
-                      <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
-                        успешно
-                      </span>
-                    ) : (
-                      <span
-                        className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700"
-                        title={run.error || ''}
-                      >
-                        ошибка
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {(showAll ? history : history.slice(0, VISIBLE_ROWS)).map((run, idx) => {
+                // sprintsSynced/sprintIssueLinks come from a best-effort step
+                // that runs after the main issue sync (see routes/jira.js) —
+                // it can fail (e.g. missing Jira Agile-API scope) even when
+                // the overall run is otherwise "успешно", so that failure
+                // needs its own visible signal instead of hiding behind a
+                // green badge that only shows a tooltip on "ошибка" rows.
+                const sprintFailed = run.status === 'success' && !run.sprintsSynced && run.error;
+                return (
+                  <tr key={idx} className="border-b border-gray-100">
+                    <td className="py-2 pr-4 whitespace-nowrap">{formatDate(run.startedAt)}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{run.source}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{run.total ?? '—'}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {sprintFailed ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-amber-700 cursor-help"
+                          title={`Не удалось синхронизировать спринты: ${run.error}`}
+                        >
+                          0 ⚠
+                        </span>
+                      ) : (
+                        run.sprintsSynced ?? '—'
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {run.status === 'success' ? (
+                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                          успешно
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700"
+                          title={run.error || ''}
+                        >
+                          ошибка
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
