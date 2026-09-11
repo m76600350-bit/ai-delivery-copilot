@@ -49,15 +49,12 @@ router.get('/login', (req, res) => {
     // against a real site by hitting each 401 "scope does not match" in
     // turn: read:board-scope:jira-software + read:project:jira got
     // /rest/agile/1.0/board working, then the exact same error moved to
-    // /board/{id}/sprint until read:sprint:jira-software was added too.
-    // If GET /sprint/{id}/issue (fetching a sprint's issues) throws the
-    // same error next, that's the next resource-specific scope to add.
+    // /board/{id}/sprint (fixed by read:sprint:jira-software), then to
+    // GET /sprint/{id}/issue (fixed by read:issue-details:jira-software).
     // Mixing these with the classic scopes below (still needed for the
     // regular /rest/api/3/* issue sync) has been accepted by this app's
     // Developer Console config without issue.
-    // Developer Console — if authorization itself fails after this change,
-    // that's the next thing to check there.
-    scope: 'read:jira-work read:jira-user offline_access read:board-scope:jira-software read:project:jira read:sprint:jira-software',
+    scope: 'read:jira-work read:jira-user offline_access read:board-scope:jira-software read:project:jira read:sprint:jira-software read:issue-details:jira-software',
     redirect_uri: process.env.JIRA_CALLBACK_URL,
     state,
     response_type: 'code',
