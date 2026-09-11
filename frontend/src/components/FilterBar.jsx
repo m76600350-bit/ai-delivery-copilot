@@ -8,10 +8,17 @@ export const PERIOD_OPTIONS = [
   { value: '90', label: 'Последние 90 дней' },
 ];
 
+// Fixed enum, not derived from the DB — matches the "блокер"/"зависла"
+// categories lib/problemIssues classifies on the backend.
+export const PROBLEM_OPTIONS = ['Блокер', 'Зависла'];
+
 // Shared shape for the Проект/Команда/Тип задачи/Статус/Приоритет/Период
 // filter set — used by both Dashboard and Tasks (via useSharedFilters), kept
-// in one place so the two screens can't drift apart.
-export const EMPTY_FILTERS = { project: [], team: [], type: [], status: [], priority: [], period: 'all' };
+// in one place so the two screens can't drift apart. `problem` rides along
+// in the same shared/persisted object (so it resets with the rest via
+// "Сброс"), but only Tasks actually renders a control for it — see
+// `showProblem` below.
+export const EMPTY_FILTERS = { project: [], team: [], type: [], status: [], priority: [], period: 'all', problem: [] };
 
 export function hasActiveFilters(filters) {
   return (
@@ -20,7 +27,8 @@ export function hasActiveFilters(filters) {
     filters.type.length > 0 ||
     filters.status.length > 0 ||
     filters.priority.length > 0 ||
-    filters.period !== 'all'
+    filters.period !== 'all' ||
+    (filters.problem?.length ?? 0) > 0
   );
 }
 
@@ -30,7 +38,8 @@ export function hasActiveFilters(filters) {
 // each dropdown (Dashboard derives them from already-loaded issues, Tasks
 // fetches them from the backend), while `filters`/`onChange`/`onReset` are
 // the shared, localStorage-persisted state from useSharedFilters.
-export default function FilterBar({ options, filters, onChange, onReset }) {
+// `showProblem` additionally renders the Задачи-only "Проблема" filter.
+export default function FilterBar({ options, filters, onChange, onReset, showProblem }) {
   return (
     <div className="flex flex-wrap items-center gap-3 bg-white rounded-lg border border-gray-200 p-3">
       <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Фильтры</span>
@@ -39,6 +48,9 @@ export default function FilterBar({ options, filters, onChange, onReset }) {
       <MultiSelectFilter label="Тип задачи" options={options.types} selected={filters.type} onChange={(v) => onChange('type', v)} />
       <MultiSelectFilter label="Статус" options={options.statuses} selected={filters.status} onChange={(v) => onChange('status', v)} />
       <MultiSelectFilter label="Приоритет" options={options.priorities} selected={filters.priority} onChange={(v) => onChange('priority', v)} />
+      {showProblem && (
+        <MultiSelectFilter label="Проблема" options={PROBLEM_OPTIONS} selected={filters.problem} onChange={(v) => onChange('problem', v)} />
+      )}
       <select
         value={filters.period}
         onChange={(e) => onChange('period', e.target.value)}

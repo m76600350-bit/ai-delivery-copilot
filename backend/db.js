@@ -237,6 +237,31 @@ async function ensureSchema() {
       -- panel hides the block entirely in that case rather than showing an
       -- empty/misleading list.
       ALTER TABLE issues ADD COLUMN IF NOT EXISTS status_time_breakdown JSONB;
+
+      -- Which widgets are on the Dashboard (Overview) and in what order —
+      -- no drag&drop, so "order" only ever changes by widgets being
+      -- added/removed, never reshuffled in place. enabled = false is a soft
+      -- remove (keeps its old position, so re-adding restores where it was)
+      -- rather than deleting the row.
+      CREATE TABLE IF NOT EXISTS dashboard_widgets (
+        id SERIAL PRIMARY KEY,
+        widget_type TEXT UNIQUE NOT NULL,
+        position INTEGER NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT true
+      );
+
+      -- Seeds the four pre-existing dashboard blocks as the default widget
+      -- set, but only the very first time (table genuinely empty) — a user
+      -- who has since removed everything keeps a blank dashboard rather
+      -- than having it silently repopulate.
+      INSERT INTO dashboard_widgets (widget_type, position, enabled)
+      SELECT * FROM (VALUES
+        ('stats_cards', 0, true),
+        ('by_status', 1, true),
+        ('by_team', 2, true),
+        ('by_type', 3, true)
+      ) AS defaults(widget_type, position, enabled)
+      WHERE NOT EXISTS (SELECT 1 FROM dashboard_widgets);
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

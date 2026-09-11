@@ -111,4 +111,19 @@ export async function getSprintsReport(params) {
   return res.data;
 }
 
+export async function getDashboardWidgets() {
+  const res = await api.get('/dashboard/widgets');
+  return res.data;
+}
+
+export async function setDashboardWidgetEnabled(widgetType, enabled) {
+  const res = await api.post(`/dashboard/widgets/${widgetType}`, { enabled });
+  return res.data;
+}
+
+export async function getDashboardAttention(params) {
+  const res = await api.get('/dashboard/attention', { params });
+  return res.data;
+}
+
 export default api;

@@ -41,6 +41,7 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
       priority: filters.priority.length ? filters.priority : undefined,
       project: filters.project.length ? filters.project : undefined,
       periodDays: filters.period !== 'all' ? filters.period : undefined,
+      problem: filters.problem?.length ? filters.problem : undefined,
     }),
     [debouncedSearch, filters]
   );
@@ -133,7 +134,7 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
         />
       </div>
 
-      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
+      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} showProblem />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

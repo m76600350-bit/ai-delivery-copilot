@@ -147,6 +147,7 @@ export default function App() {
                     filters={filters}
                     onFilterChange={updateFilter}
                     onResetFilters={resetFilters}
+                    siteUrl={jiraStatus?.siteUrl}
                   />
                 ) : (
                   <div className="max-w-2xl mx-auto space-y-6">

@@ -1,6 +1,7 @@
 const express = require('express');
 const { ensureSchema, getPool } = require('../db');
 const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/jiraAuth');
+const { computeProblemIssues } = require('../lib/problemIssues');
 
 const router = express.Router();
 
@@ -1228,7 +1229,10 @@ function toArray(value) {
 
 // Every list/filters/export query needs the same WHERE clause, built from
 // the same query params — kept in one place so the three stay consistent.
-function buildTaskFilters(query) {
+// problemIssueIds (if given) additionally restricts to that exact set of
+// issue ids — see the /tasks route, which resolves query.problem
+// ("Блокер"/"Зависла") into ids via lib/problemIssues before calling this.
+function buildTaskFilters(query, problemIssueIds) {
   const conditions = ['is_deleted = false'];
   const params = [];
 
@@ -1274,6 +1278,11 @@ function buildTaskFilters(query) {
   if (periodDays > 0) {
     params.push(periodDays);
     conditions.push(`created_at >= now() - ($${params.length}::int * INTERVAL '1 day')`);
+  }
+
+  if (problemIssueIds) {
+    params.push(problemIssueIds);
+    conditions.push(`id = ANY($${params.length}::int[])`);
   }
 
   return { where: conditions.join(' AND '), params };
@@ -1370,7 +1379,24 @@ router.get('/tasks', async (req, res) => {
   try {
     await ensureSchema();
     const pool = getPool();
-    const { where, params } = buildTaskFilters(req.query);
+
+    // "Проблема" (Блокер/Зависла) resolves via the same classification the
+    // Dashboard's "Требует внимания" widget uses (lib/problemIssues), turned
+    // into a plain issue-id allowlist so it composes with the rest of the
+    // filters as one WHERE clause. An empty resolved set still needs a
+    // (non-matching) id array — omitting the restriction entirely would
+    // silently show everything instead of nothing.
+    const problemFilter = toArray(req.query.problem);
+    let problemIssueIds;
+    if (problemFilter.length) {
+      const problemData = await computeProblemIssues();
+      const ids = new Set();
+      if (problemFilter.includes('Блокер')) for (const id of problemData.blockedIssueIds) ids.add(id);
+      if (problemFilter.includes('Зависла')) for (const id of problemData.agingByIssueId.keys()) ids.add(id);
+      problemIssueIds = ids.size ? [...ids] : [-1];
+    }
+
+    const { where, params } = buildTaskFilters(req.query, problemIssueIds);
 
     if (req.query.export === 'csv') {
       const { rows } = await pool.query(
