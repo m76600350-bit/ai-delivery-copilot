@@ -50,11 +50,14 @@ router.get('/login', (req, res) => {
     // turn: read:board-scope:jira-software + read:project:jira got
     // /rest/agile/1.0/board working, then the exact same error moved to
     // /board/{id}/sprint (fixed by read:sprint:jira-software), then to
-    // GET /sprint/{id}/issue (fixed by read:issue-details:jira-software).
+    // GET /sprint/{id}/issue — fixed by read:issue-details:jira, NOT
+    // read:issue-details:jira-software (that name doesn't exist as a
+    // grantable scope in the Developer Console despite looking like the
+    // natural sibling of the other -jira-software scopes above).
     // Mixing these with the classic scopes below (still needed for the
     // regular /rest/api/3/* issue sync) has been accepted by this app's
     // Developer Console config without issue.
-    scope: 'read:jira-work read:jira-user offline_access read:board-scope:jira-software read:project:jira read:sprint:jira-software read:issue-details:jira-software',
+    scope: 'read:jira-work read:jira-user offline_access read:board-scope:jira-software read:project:jira read:sprint:jira-software read:issue-details:jira',
     redirect_uri: process.env.JIRA_CALLBACK_URL,
     state,
     response_type: 'code',
