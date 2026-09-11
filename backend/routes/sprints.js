@@ -142,16 +142,34 @@ function computeBurndownAndCfd(sprint, rows, eventsByIssueId) {
   const start = new Date(sprint.start_date);
   const end = new Date(sprint.end_date);
   const today = new Date();
-  const lastDay = sprint.state === 'active' && today < end ? today : end;
-  const days = buildDayRange(start, lastDay);
-  if (!days.length) return { burndown: [], cfd: [] };
+  // The burndown's timeline always spans the whole sprint (start_date to
+  // end_date) so a just-started sprint doesn't render as a near-empty
+  // one/two-point chart — only the days up to today get a real "факт" point
+  // (actualSp stays null beyond today, which the frontend simply doesn't
+  // plot); the idealSp reference line is defined for every day regardless.
+  const fullDays = buildDayRange(start, end);
+  if (!fullDays.length) return { burndown: [], cfd: [] };
+
+  // The cumulative-flow diagram, unlike burndown, has no "ideal" line to
+  // extrapolate against — a future day's status mix is simply unknown, so
+  // it only ever covers days that have actually happened.
+  const cfdLastDay = sprint.state === 'active' && today < end ? today : end;
+  const cfdDayCount = buildDayRange(start, cfdLastDay).length;
 
   const totalSp = round2(sumSp(rows));
   const totalDays = Math.max(1, Math.round((startOfDay(end).getTime() - startOfDay(start).getTime()) / 86400000));
 
   const burndown = [];
   const cfd = [];
-  days.forEach((day, idx) => {
+  fullDays.forEach((day, idx) => {
+    const idealSp = Math.max(0, round2(totalSp - (totalSp * idx) / totalDays));
+    const isFuture = idx >= cfdDayCount;
+
+    if (isFuture) {
+      burndown.push({ day: dayKey(day), dayIndex: idx + 1, actualSp: null, idealSp });
+      return;
+    }
+
     const boundaryMs = endOfDayMs(day);
     let remainingSp = 0;
     let doneCount = 0;
@@ -173,7 +191,6 @@ function computeBurndownAndCfd(sprint, rows, eventsByIssueId) {
       }
     }
 
-    const idealSp = Math.max(0, round2(totalSp - (totalSp * idx) / totalDays));
     burndown.push({ day: dayKey(day), dayIndex: idx + 1, actualSp: round2(remainingSp), idealSp });
     cfd.push({ day: dayKey(day), dayIndex: idx + 1, done: doneCount, inProgress: inProgressCount, todo: todoCount });
   });
@@ -347,10 +364,14 @@ router.get('/report', async (req, res) => {
     }
 
     // Positive = behind schedule (more remaining than the ideal line expects
-    // by now), which is the only direction "отставание" describes.
+    // by now), which is the only direction "отставание" describes. Uses the
+    // last day with a real (non-null) actualSp — burndown now always spans
+    // the full sprint, so its last entry can be a future day with no fact
+    // point yet.
+    const lastActualPoint = [...burndown].reverse().find((d) => d.actualSp != null);
     const lagSp =
-      selectedSprint?.state === 'active' && burndown.length
-        ? round2(burndown[burndown.length - 1].actualSp - burndown[burndown.length - 1].idealSp)
+      selectedSprint?.state === 'active' && lastActualPoint
+        ? round2(lastActualPoint.actualSp - lastActualPoint.idealSp)
         : null;
 
     const daysRemaining =
