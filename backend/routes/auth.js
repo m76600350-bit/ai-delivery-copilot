@@ -45,7 +45,16 @@ router.get('/login', (req, res) => {
   const params = new URLSearchParams({
     audience: 'api.atlassian.com',
     client_id: process.env.JIRA_CLIENT_ID,
-    scope: 'read:jira-work read:jira-user offline_access',
+    // read:board-scope:jira-software + read:project:jira are the granular
+    // scopes the Agile API (boards/sprints) needs — confirmed via an
+    // Atlassian community answer after `/rest/agile/1.0/board` was
+    // returning 401 "scope does not match" with just the classic scopes
+    // below (which cover the regular /rest/api/3/* issue endpoints fine on
+    // their own). Whether this mixed classic+granular request is even
+    // accepted depends on how the app's API scopes are configured in the
+    // Developer Console — if authorization itself fails after this change,
+    // that's the next thing to check there.
+    scope: 'read:jira-work read:jira-user offline_access read:board-scope:jira-software read:project:jira',
     redirect_uri: process.env.JIRA_CALLBACK_URL,
     state,
     response_type: 'code',
