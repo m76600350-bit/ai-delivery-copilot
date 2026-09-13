@@ -11,6 +11,9 @@ export const WIDGET_CATALOG = [
   { type: 'by_team', title: 'По команде', description: 'Разбивка задач по команде' },
   { type: 'by_type', title: 'По типу', description: 'Разбивка задач по типу' },
   { type: 'attention', title: 'Требует внимания', description: 'Блокеры и зависшие задачи (aging WIP)' },
+  { type: 'teams_summary', title: 'Задачи по командам', description: 'Всего/в работе/готово, Cycle time и тренд по каждой команде' },
+  { type: 'throughput_weekly', title: 'Throughput по неделям', description: 'Количество завершённых задач по неделям, последние 7 недель' },
+  { type: 'sprint_burndown', title: 'Burndown спринта', description: 'Диаграмма сгорания SP выбранного спринта' },
 ];
 
 export default function WidgetLibraryModal({ widgets, onAdd, onClose }) {

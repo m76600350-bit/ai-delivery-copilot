@@ -126,6 +126,16 @@ export async function getDashboardAttention(params) {
   return res.data;
 }
 
+export async function getDashboardTeamsSummary(params) {
+  const res = await api.get('/dashboard/teams-summary', { params });
+  return res.data;
+}
+
+export async function getDashboardThroughput(params) {
+  const res = await api.get('/dashboard/throughput', { params });
+  return res.data;
+}
+
 export async function getReportStatus(params) {
   const res = await api.get('/reports/status', { params });
   return res.data;

@@ -2,11 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { getDashboardAttention } from '../api.js';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
 import WidgetMenu from './WidgetMenu.jsx';
+import WidgetFilterPopover from './WidgetFilterPopover.jsx';
 
 const PROBLEM_BADGE_CLASS = {
   'блокер': 'bg-red-100 text-red-700',
   'зависла': 'bg-yellow-100 text-yellow-700',
 };
+
+const PERIOD_OPTIONS = [
+  { value: 'inherit', label: 'Как на дашборде' },
+  { value: 'all', label: 'Всё время' },
+  { value: '7', label: 'Последние 7 дней' },
+  { value: '30', label: 'Последние 30 дней' },
+  { value: '90', label: 'Последние 90 дней' },
+];
 
 function formatMetric(item) {
   if (item.problem === 'блокер') return `${item.days} д`;
@@ -16,11 +25,14 @@ function formatMetric(item) {
 // dashboardFilters mirrors the shape FilterBar/useSharedFilters produces —
 // this widget respects the same Проект/Команда/Тип/Статус/Приоритет/Период
 // selection as the rest of the Dashboard (4.1), refetching whenever it changes.
-export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSiteUrl, onNavigateToTasks, onRemove }) {
+export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSiteUrl, onNavigateToTasks, onRemove, localPeriod, onLocalPeriodChange, onExpand, fullScreen }) {
   const [data, setData] = useState({ items: [], total: 0, siteUrl: null });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
+
+  const effectivePeriod = localPeriod && localPeriod !== 'inherit' ? localPeriod : dashboardFilters.period;
+  const localFilterActive = Boolean(localPeriod && localPeriod !== 'inherit');
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +45,8 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
       type: dashboardFilters.type.length ? dashboardFilters.type : undefined,
       status: dashboardFilters.status.length ? dashboardFilters.status : undefined,
       priority: dashboardFilters.priority.length ? dashboardFilters.priority : undefined,
-      periodDays: dashboardFilters.period !== 'all' ? dashboardFilters.period : undefined,
+      periodDays: effectivePeriod !== 'all' ? effectivePeriod : undefined,
+      full: fullScreen ? '1' : undefined,
     })
       .then((result) => {
         if (!cancelled) setData(result);
@@ -48,13 +61,34 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
     return () => {
       cancelled = true;
     };
-  }, [dashboardFilters]);
+  }, [dashboardFilters, effectivePeriod, fullScreen]);
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm font-medium text-gray-700">Требует внимания</p>
-        <WidgetMenu onRemove={() => onRemove?.()} />
+        <div className="flex items-center gap-2">
+          <WidgetFilterPopover active={localFilterActive}>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Период (только для этого виджета)</label>
+              <select
+                value={localPeriod || 'inherit'}
+                onChange={(e) => onLocalPeriodChange(e.target.value)}
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+              >
+                {PERIOD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          </WidgetFilterPopover>
+          {!fullScreen && onExpand && (
+            <button onClick={onExpand} title="Развернуть на весь экран" className="text-gray-400 hover:text-gray-700 text-sm leading-none">
+              ⛶
+            </button>
+          )}
+          {!fullScreen && <WidgetMenu onRemove={() => onRemove?.()} />}
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -101,7 +135,7 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
         </div>
       )}
 
-      {!isLoading && data.total > 10 && (
+      {!isLoading && !fullScreen && data.total > 10 && (
         <p className="text-xs text-gray-400 mt-3">
           {data.total} задач всего ·{' '}
           <button
