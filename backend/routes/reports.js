@@ -4,6 +4,7 @@ const { getStoredToken } = require('../lib/jiraAuth');
 const { computeProblemIssues } = require('../lib/problemIssues');
 const { computeTeamsReport } = require('./teams');
 const { computeSprintReport } = require('./sprints');
+const { resolvePeriodRange } = require('../lib/period');
 
 const router = express.Router();
 
@@ -106,11 +107,12 @@ router.get('/status', async (req, res) => {
     const typeFilter = toArray(req.query.type);
     const statusFilter = toArray(req.query.status);
     const priorityFilter = toArray(req.query.priority);
-    const period = req.query.period && req.query.period !== 'all' ? req.query.period : null;
-    const periodDays = period ? Math.max(1, parseInt(period, 10) || DEFAULT_PERIOD_DAYS) : DEFAULT_PERIOD_DAYS;
+    const periodSet = Boolean(req.query.period && req.query.period !== 'all');
+    const { start: resolvedStart, end: resolvedEnd } = resolvePeriodRange(req.query);
 
     const now = new Date();
-    const rangeStart = new Date(now.getTime() - periodDays * 86400000);
+    const rangeStart = resolvedStart || new Date(now.getTime() - DEFAULT_PERIOD_DAYS * 86400000);
+    const rangeEnd = resolvedEnd || now;
 
     const [teamsData, problemData, projectRows] = await Promise.all([
       computeTeamsReport(req.query),
@@ -199,7 +201,7 @@ router.get('/status', async (req, res) => {
     }
 
     // --- Draft summary lookup ---
-    const periodKey = `${rangeStart.toISOString().slice(0, 10)}_${now.toISOString().slice(0, 10)}_${[...projectFilter].sort().join(',')}`;
+    const periodKey = `${rangeStart.toISOString().slice(0, 10)}_${rangeEnd.toISOString().slice(0, 10)}_${[...projectFilter].sort().join(',')}`;
     const { rows: draftRows } = await pool.query(
       'SELECT summary FROM report_summary_draft WHERE period_key = $1',
       [periodKey]
@@ -209,8 +211,8 @@ router.get('/status', async (req, res) => {
 
     res.json({
       periodKey,
-      title: period ? `Статус доставки — последние ${periodDays} дн.` : `Статус доставки — неделя ${isoWeekNumber(now)}`,
-      dateRangeLabel: `${formatDate(rangeStart)} — ${formatDate(now)}`,
+      title: periodSet ? `Статус доставки — ${formatDate(rangeStart)} – ${formatDate(rangeEnd)}` : `Статус доставки — неделя ${isoWeekNumber(now)}`,
+      dateRangeLabel: `${formatDate(rangeStart)} — ${formatDate(rangeEnd)}`,
       projects: projectFilter.length ? projectFilter : projectRows.rows.map((r) => r.project),
       summaryAuto: buildAutoSummary({ teamsTable, worstTeam, mainBlocker }),
       summaryDraft: draftRows[0]?.summary ?? null,
@@ -475,12 +477,12 @@ router.get('/quality', async (req, res) => {
 
     const projectFilter = toArray(req.query.project);
     const teamFilter = toArray(req.query.team);
-    const period = req.query.period && req.query.period !== 'all' ? req.query.period : null;
-    const periodDays = period ? Math.max(1, parseInt(period, 10) || QUALITY_DEFAULT_PERIOD_DAYS) : QUALITY_DEFAULT_PERIOD_DAYS;
-    const cutoff = new Date(Date.now() - periodDays * 86400000);
+    const { start: resolvedStart, end: resolvedEnd } = resolvePeriodRange(req.query);
+    const cutoff = resolvedStart || new Date(Date.now() - QUALITY_DEFAULT_PERIOD_DAYS * 86400000);
+    const rangeEnd = resolvedEnd || new Date();
 
-    const conditions = ['is_deleted = false', 'created_at >= $1'];
-    const params = [cutoff.toISOString()];
+    const conditions = ['is_deleted = false', 'created_at >= $1', 'created_at <= $2'];
+    const params = [cutoff.toISOString(), rangeEnd.toISOString()];
     if (projectFilter.length) {
       params.push(projectFilter);
       conditions.push(`COALESCE(project, 'Без проекта') = ANY($${params.length}::text[])`);
@@ -596,8 +598,7 @@ router.get('/quality', async (req, res) => {
       .map((p) => ({ issueKey: p.key, summary: p.summary, team: p.team, bugCount: p.bugCount }));
 
     res.json({
-      periodDays,
-      dateRangeLabel: `${cutoff.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} — ${new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}`,
+      dateRangeLabel: `${cutoff.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} — ${rangeEnd.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}`,
       weeklyBugRate,
       bugRateByTeam,
       reopenRateByTeam,

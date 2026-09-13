@@ -1,5 +1,6 @@
 const express = require('express');
 const { ensureSchema, getPool } = require('../db');
+const { resolvePeriodRange } = require('../lib/period');
 
 const router = express.Router();
 
@@ -110,6 +111,18 @@ async function computeTeamsReport(query) {
   if (priorityFilter.length) {
     params.push(priorityFilter);
     conditions.push(`COALESCE(priority, 'Без приоритета') = ANY($${params.length}::text[])`);
+  }
+  // The shared "Период" filter — same created_at cut every other filterable
+  // screen uses (resolvePeriodRange), applied here exactly like the other
+  // dimension filters above so it can't disagree with Дашборд/Задачи/Отчёты.
+  const { start: periodStart, end: periodEnd } = resolvePeriodRange(query);
+  if (periodStart) {
+    params.push(periodStart.toISOString());
+    conditions.push(`created_at >= $${params.length}`);
+  }
+  if (periodEnd) {
+    params.push(periodEnd.toISOString());
+    conditions.push(`created_at <= $${params.length}`);
   }
 
     const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }, { rows: roleRows }, { rows: crossTeamLinkRows }] = await Promise.all([

@@ -149,6 +149,7 @@ export default function App() {
                     onFilterChange={updateFilter}
                     onResetFilters={resetFilters}
                     siteUrl={jiraStatus?.siteUrl}
+                    lastSyncedAt={jiraStatus?.lastSyncedAt}
                   />
                 ) : (
                   <div className="max-w-2xl mx-auto space-y-6">
@@ -174,14 +175,30 @@ export default function App() {
             filters={filters}
             onFilterChange={updateFilter}
             onResetFilters={resetFilters}
+            onSyncJira={syncFromJira}
+            lastSyncedAt={jiraStatus?.lastSyncedAt}
           />
         )}
 
         {activeTab === 'teams' && (
-          <Teams jiraConnected={jiraStatus?.connected || false} onNavigateToTasks={navigateToTasks} />
+          <Teams
+            jiraConnected={jiraStatus?.connected || false}
+            onNavigateToTasks={navigateToTasks}
+            filters={filters}
+            onFilterChange={updateFilter}
+            onResetFilters={resetFilters}
+            onSyncJira={syncFromJira}
+            lastSyncedAt={jiraStatus?.lastSyncedAt}
+          />
         )}
 
-        {activeTab === 'sprints' && <Sprints jiraConnected={jiraStatus?.connected || false} />}
+        {activeTab === 'sprints' && (
+          <Sprints
+            jiraConnected={jiraStatus?.connected || false}
+            onSyncJira={syncFromJira}
+            lastSyncedAt={jiraStatus?.lastSyncedAt}
+          />
+        )}
 
         {activeTab === 'reports' && (
           <Reports
@@ -189,6 +206,8 @@ export default function App() {
             filters={filters}
             onFilterChange={updateFilter}
             onResetFilters={resetFilters}
+            onSyncJira={syncFromJira}
+            lastSyncedAt={jiraStatus?.lastSyncedAt}
           />
         )}
 

@@ -3,6 +3,7 @@ import { getTasks, getTaskFilters, exportTasksCsv } from '../api.js';
 import StatusBadge from './StatusBadge.jsx';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
 import FilterBar from './FilterBar.jsx';
+import SectionHeader from './SectionHeader.jsx';
 
 function formatDays(value) {
   return value == null ? '—' : `${value} дн`;
@@ -20,7 +21,7 @@ function useDebouncedValue(value, delayMs) {
 // Search stays local to this screen (not part of the shared filter set) —
 // it's a per-visit lookup, not a filter the user expects to carry over to
 // the Dashboard.
-export default function Tasks({ jiraConnected, filters, onFilterChange, onResetFilters }) {
+export default function Tasks({ jiraConnected, filters, onFilterChange, onResetFilters, onSyncJira, lastSyncedAt }) {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
 
@@ -113,8 +114,9 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
 
   return (
     <div className="max-w-7xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">Задачи</h2>
+      <SectionHeader title="Задачи" lastSyncedAt={lastSyncedAt} onSync={onSyncJira} />
+
+      <div className="flex items-center justify-end">
         <button
           onClick={handleExport}
           disabled={isExporting || result.total === 0}

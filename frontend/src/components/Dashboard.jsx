@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import WidgetDrilldown from './WidgetDrilldown.jsx';
 import FilterBar, { hasActiveFilters } from './FilterBar.jsx';
+import SectionHeader from './SectionHeader.jsx';
 import WidgetMenu from './WidgetMenu.jsx';
 import WidgetFilterPopover from './WidgetFilterPopover.jsx';
 import WidgetLibraryModal from './WidgetLibraryModal.jsx';
@@ -9,7 +10,6 @@ import TeamsSummaryWidget from './TeamsSummaryWidget.jsx';
 import ThroughputWidget from './ThroughputWidget.jsx';
 import SprintBurndownWidget from './SprintBurndownWidget.jsx';
 import { getDashboardWidgets, setDashboardWidgetEnabled } from '../api.js';
-import useSyncProgress from '../useSyncProgress.js';
 
 const PERIOD_OPTIONS = [
   { value: 'inherit', label: 'Как на дашборде' },
@@ -18,14 +18,6 @@ const PERIOD_OPTIONS = [
   { value: '30', label: 'Последние 30 дней' },
   { value: '90', label: 'Последние 90 дней' },
 ];
-
-function syncButtonLabel(isSyncing, progress) {
-  if (!isSyncing) return 'Обновить данные из Jira';
-  if (progress && progress.total > 0) {
-    return `Синхронизация... получено ${progress.completed} из ${progress.total} задач`;
-  }
-  return 'Синхронизация...';
-}
 
 function issueTeams(issue) {
   const source = issue.team || issue.labels || '';
@@ -52,53 +44,44 @@ function computeStats(issues) {
   return { total: issues.length, byStatus, byTeam, byType };
 }
 
+// Resolves the shared Период filter (or a widget-local preset override, see
+// below) to a [startMs, endMs] bound, supporting both the day-count presets
+// and an arbitrary custom range — mirrors backend/lib/period.js so the
+// client-side stats Dashboard computes from `allIssues` can't disagree with
+// what the server would compute for the same filters.
+function resolvePeriodBoundsMs(period, periodStart, periodEnd) {
+  if (period === 'custom') {
+    const start = periodStart ? new Date(`${periodStart}T00:00:00.000`).getTime() : null;
+    const end = periodEnd ? new Date(`${periodEnd}T23:59:59.999`).getTime() : null;
+    return { start, end };
+  }
+  const days = { '7': 7, '30': 30, '90': 90 }[period];
+  if (!days) return { start: null, end: null };
+  return { start: Date.now() - days * 86400000, end: null };
+}
+
 // Same shape as Dashboard's own filtering, but with an optional period
 // OVERRIDE — a widget's local funnel filter (4.3) narrows just that widget
-// without touching the shared dashboard filter state.
+// without touching the shared dashboard filter state. The override is
+// always a plain preset (never "custom" — the local funnel doesn't offer a
+// date-range picker), so it never needs periodStart/periodEnd of its own.
 function filterIssuesForPeriod(issues, filters, periodOverride) {
-  const period = periodOverride && periodOverride !== 'inherit' ? periodOverride : filters.period;
-  const cutoff = period === 'all' ? null : Date.now() - Number(period) * 86400000;
+  const { start, end } =
+    periodOverride && periodOverride !== 'inherit'
+      ? resolvePeriodBoundsMs(periodOverride, null, null)
+      : resolvePeriodBoundsMs(filters.period, filters.periodStart, filters.periodEnd);
+
   return issues.filter((issue) => {
     if (filters.project.length && !filters.project.includes(issue.project)) return false;
     if (filters.team.length && !issueTeams(issue).some((t) => filters.team.includes(t))) return false;
     if (filters.type.length && !filters.type.includes(issue.type || 'Без типа')) return false;
     if (filters.status.length && !filters.status.includes(issue.status || 'Без статуса')) return false;
     if (filters.priority.length && !filters.priority.includes(issue.priority || 'Без приоритета')) return false;
-    if (cutoff != null) {
-      const created = issue.createdAt ? new Date(issue.createdAt).getTime() : null;
-      if (!created || Number.isNaN(created) || created < cutoff) return false;
-    }
+    const created = issue.createdAt ? new Date(issue.createdAt).getTime() : null;
+    if (start != null && (!created || Number.isNaN(created) || created < start)) return false;
+    if (end != null && (!created || Number.isNaN(created) || created > end)) return false;
     return true;
   });
-}
-
-function StatCard({ title, value }) {
-  return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-      <p className="text-sm text-gray-500">{title}</p>
-      <p className="text-2xl font-semibold text-gray-800 mt-1">{value}</p>
-    </div>
-  );
-}
-
-// The four StatCards are one widget ("stats_cards") — its own menu sits
-// above the 4-up grid rather than on each card individually. Per spec 4.1
-// these stay full-width/one-row and are the one widget type exempt from the
-// funnel/expand controls the rest of the library gets (4.3).
-function StatsCardsWidget({ stats, onRemove }) {
-  return (
-    <div className="relative">
-      <div className="absolute right-0 -top-8">
-        <WidgetMenu onRemove={onRemove} />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard title="Всего задач" value={stats.total} />
-        <StatCard title="Статусов" value={Object.keys(stats.byStatus || {}).length} />
-        <StatCard title="Команд" value={Object.keys(stats.byTeam || {}).length} />
-        <StatCard title="Типов" value={Object.keys(stats.byType || {}).length} />
-      </div>
-    </div>
-  );
 }
 
 function BreakdownCard({ title, data, onExpand, onRemove, localPeriod, onLocalPeriodChange, fullScreen }) {
@@ -107,8 +90,8 @@ function BreakdownCard({ title, data, onExpand, onRemove, localPeriod, onLocalPe
   const localFilterActive = Boolean(localPeriod && localPeriod !== 'inherit');
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+      <div className="flex items-center justify-between mb-3 shrink-0">
         <p className="text-sm font-medium text-gray-700">{title}</p>
         <div className="flex items-center gap-2">
           <WidgetFilterPopover active={localFilterActive}>
@@ -137,7 +120,7 @@ function BreakdownCard({ title, data, onExpand, onRemove, localPeriod, onLocalPe
           {!fullScreen && <WidgetMenu onRemove={onRemove} />}
         </div>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-2 flex-1 min-h-0 overflow-y-auto">
         {entries.map(([key, count]) => (
           <div key={key}>
             <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -166,9 +149,7 @@ const WIDGET_TITLES = {
   type: 'По типу',
 };
 
-export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigateToTasks, filters, onFilterChange, onResetFilters, siteUrl }) {
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncError, setSyncError] = useState(null);
+export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigateToTasks, filters, onFilterChange, onResetFilters, siteUrl, lastSyncedAt }) {
   const [expandedWidget, setExpandedWidget] = useState(null); // status/team/type dimension -> WidgetDrilldown
   const [expandedGeneric, setExpandedGeneric] = useState(null); // widgetType -> generic full-screen modal
   const [widgets, setWidgets] = useState([]);
@@ -181,7 +162,6 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
   const [localPeriod, setLocalPeriod] = useState({});
   const [throughputLocalTeam, setThroughputLocalTeam] = useState([]);
   const [throughputLocalType, setThroughputLocalType] = useState([]);
-  const syncProgress = useSyncProgress(isSyncing);
 
   const loadWidgets = () => {
     getDashboardWidgets()
@@ -234,31 +214,14 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
 
   const filtersActive = hasActiveFilters(filters);
 
-  const filteredStats = useMemo(
-    () => (filtersActive ? computeStats(filteredIssues) : stats),
-    [filtersActive, filteredIssues, stats]
-  );
-
   // by_status/by_team/by_type each optionally override just Период via their
   // own funnel filter (localPeriod[widgetType]) — falls back to the shared
   // dashboard aggregate when neither the shared filters nor this widget's
-  // own override are active, same as filteredStats above.
+  // own override are active.
   const statsForBreakdown = (widgetType) => {
     const override = localPeriod[widgetType];
     if (!filtersActive && (!override || override === 'inherit')) return stats;
     return computeStats(filterIssuesForPeriod(allIssues, filters, override));
-  };
-
-  const handleSyncJira = async (force = false) => {
-    setIsSyncing(true);
-    setSyncError(null);
-    try {
-      await onSyncJira(force);
-    } catch (err) {
-      setSyncError(err.response?.data?.error || 'Не удалось синхронизировать данные из Jira');
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   // Every hook above must run on every render regardless of this branch —
@@ -280,13 +243,9 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
   }
 
   const enabledWidgets = widgets.filter((w) => w.enabled).sort((a, b) => a.position - b.position);
-  const statsCardsWidget = enabledWidgets.find((w) => w.widgetType === 'stats_cards');
-  const gridWidgets = enabledWidgets.filter((w) => w.widgetType !== 'stats_cards');
 
   const renderWidget = (widgetType, { fullScreen = false } = {}) => {
     switch (widgetType) {
-      case 'stats_cards':
-        return <StatsCardsWidget key={widgetType} stats={filteredStats} onRemove={() => setWidgetEnabled(widgetType, false)} />;
       case 'by_status':
         return (
           <BreakdownCard
@@ -384,41 +343,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-800">Статистика</h2>
-          {stats.lastSyncedAt && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              Последняя синхронизация с Jira: {new Date(stats.lastSyncedAt).toLocaleString('ru-RU')}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-4">
-          {jiraConnected && (
-            <>
-              <button
-                onClick={() => handleSyncJira(false)}
-                disabled={isSyncing}
-                className="bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {syncButtonLabel(isSyncing, syncProgress)}
-              </button>
-              <button
-                onClick={() => handleSyncJira(true)}
-                disabled={isSyncing}
-                title="Пересчитывает время в статусах для всех задач заново, даже если они не менялись в Jira — используйте после обновления приложения, если цифры выглядят устаревшими"
-                className="text-sm text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
-              >
-                Полная пересинхронизация
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {syncError && (
-        <p className="text-sm text-red-600 -mt-4">{syncError}</p>
-      )}
+      <SectionHeader title="Дашборд" lastSyncedAt={lastSyncedAt} onSync={onSyncJira} />
 
       <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
 
@@ -428,13 +353,13 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
         </p>
       )}
 
-      {/* 4.1 — верхние карточки статистики остаются в одну строку, отдельно
-          от остальных виджетов. 4.2 — всё остальное идёт в 2 колонки. */}
-      {statsCardsWidget && renderWidget('stats_cards')}
-
-      {gridWidgets.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-          {gridWidgets.map((w) => renderWidget(w.widgetType))}
+      {/* 1.1/1.2 — grid default stretch makes every widget in a row match the
+          tallest one; each widget's own root (h-full flex flex-col) plus an
+          internal overflow-y-auto body is what keeps the CARD itself from
+          growing past that height while its content still scrolls. */}
+      {enabledWidgets.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {enabledWidgets.map((w) => renderWidget(w.widgetType))}
         </div>
       )}
 

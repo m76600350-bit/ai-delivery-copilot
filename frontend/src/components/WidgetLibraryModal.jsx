@@ -6,7 +6,6 @@ import React from 'react';
 // nothing about a widget is customizable — it's either on the dashboard or
 // it isn't.
 export const WIDGET_CATALOG = [
-  { type: 'stats_cards', title: 'Карточки статистики', description: 'Всего задач / Статусов / Команд / Типов' },
   { type: 'by_status', title: 'По статусу', description: 'Разбивка задач по статусу' },
   { type: 'by_team', title: 'По команде', description: 'Разбивка задач по команде' },
   { type: 'by_type', title: 'По типу', description: 'Разбивка задач по типу' },

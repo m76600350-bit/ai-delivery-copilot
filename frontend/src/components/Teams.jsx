@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getTeamsFilters, getTeamsReport } from '../api.js';
-import MultiSelectFilter from './MultiSelectFilter.jsx';
+import { getTaskFilters, getTeamsReport } from '../api.js';
+import FilterBar from './FilterBar.jsx';
+import SectionHeader from './SectionHeader.jsx';
 
 const HEALTH_LABEL = { normal: 'норма', risk: 'риск', overload: 'перегруз', insufficient_data: 'недостаточно данных' };
 const HEALTH_CLASS = {
@@ -256,9 +257,14 @@ function CrossTeamDependenciesTable({ dependencies, onNavigateToTasks }) {
   );
 }
 
-export default function Teams({ jiraConnected, onNavigateToTasks }) {
-  const [filters, setFilters] = useState({ sprint: [], team: [], project: [] });
-  const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], projects: [] });
+// filters/onFilterChange/onResetFilters is the same shared Проект/Команда/
+// Тип/Статус/Приоритет/Период state Дашборд/Задачи/Отчёты use (4.1) — this
+// screen no longer keeps its own separate filter state. The Спринт filter
+// it used to have is gone: computeTeamsReport already automatically
+// resolves each team's own "last sprint" (active, else latest closed) for
+// every sprint-derived number here, which is the more useful default anyway.
+export default function Teams({ jiraConnected, onNavigateToTasks, filters, onFilterChange, onResetFilters, onSyncJira, lastSyncedAt }) {
+  const [filterOptions, setFilterOptions] = useState({ statuses: [], teams: [], types: [], priorities: [], projects: [] });
   const [report, setReport] = useState({ teams: [], crossTeamDependencies: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -266,7 +272,7 @@ export default function Teams({ jiraConnected, onNavigateToTasks }) {
 
   useEffect(() => {
     if (!jiraConnected) return;
-    getTeamsFilters()
+    getTaskFilters()
       .then(setFilterOptions)
       .catch(() => {});
   }, [jiraConnected]);
@@ -278,9 +284,14 @@ export default function Teams({ jiraConnected, onNavigateToTasks }) {
     setError(null);
 
     getTeamsReport({
-      sprint: filters.sprint.length ? filters.sprint : undefined,
-      team: filters.team.length ? filters.team : undefined,
       project: filters.project.length ? filters.project : undefined,
+      team: filters.team.length ? filters.team : undefined,
+      type: filters.type.length ? filters.type : undefined,
+      status: filters.status.length ? filters.status : undefined,
+      priority: filters.priority.length ? filters.priority : undefined,
+      period: filters.period !== 'all' ? filters.period : undefined,
+      periodStart: filters.periodStart || undefined,
+      periodEnd: filters.periodEnd || undefined,
     })
       .then((data) => {
         if (!cancelled) setReport(data);
@@ -297,8 +308,6 @@ export default function Teams({ jiraConnected, onNavigateToTasks }) {
     };
   }, [jiraConnected, filters]);
 
-  const updateFilter = (field, value) => setFilters((prev) => ({ ...prev, [field]: value }));
-  const hasActiveFilters = filters.sprint.length || filters.team.length || filters.project.length;
   const expandedTeamData = useMemo(
     () => report.teams.find((t) => t.team === expandedTeam) || null,
     [report.teams, expandedTeam]
@@ -316,19 +325,9 @@ export default function Teams({ jiraConnected, onNavigateToTasks }) {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <h2 className="text-lg font-semibold text-gray-800">Команды</h2>
+      <SectionHeader title="Команды" lastSyncedAt={lastSyncedAt} onSync={onSyncJira} />
 
-      <div className="flex flex-wrap items-center gap-3 bg-white rounded-lg border border-gray-200 p-3">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Фильтры</span>
-        <MultiSelectFilter label="Спринт" options={filterOptions.sprints} selected={filters.sprint} onChange={(v) => updateFilter('sprint', v)} />
-        <MultiSelectFilter label="Команда" options={filterOptions.teams} selected={filters.team} onChange={(v) => updateFilter('team', v)} />
-        <MultiSelectFilter label="Проект" options={filterOptions.projects} selected={filters.project} onChange={(v) => updateFilter('project', v)} />
-        {hasActiveFilters ? (
-          <button onClick={() => setFilters({ sprint: [], team: [], project: [] })} className="text-xs text-blue-600 hover:underline">
-            Сброс
-          </button>
-        ) : null}
-      </div>
+      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

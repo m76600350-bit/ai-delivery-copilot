@@ -2,6 +2,7 @@ const express = require('express');
 const { ensureSchema, getPool } = require('../db');
 const { getValidAccessToken, getStoredToken, JIRA_API_BASE } = require('../lib/jiraAuth');
 const { computeProblemIssues } = require('../lib/problemIssues');
+const { resolvePeriodRange } = require('../lib/period');
 
 const router = express.Router();
 
@@ -1272,12 +1273,16 @@ function buildTaskFilters(query, problemIssueIds) {
     conditions.push(`COALESCE(project, 'Без проекта') = ANY($${params.length}::text[])`);
   }
 
-  // Mirrors the Dashboard/WidgetDrilldown "Период" filter, which also cuts
-  // by created_at rather than updated_at.
-  const periodDays = Math.max(0, Math.trunc(Number(query.periodDays)) || 0);
-  if (periodDays > 0) {
-    params.push(periodDays);
-    conditions.push(`created_at >= now() - ($${params.length}::int * INTERVAL '1 day')`);
+  // The shared "Период" filter (preset days-back or a custom date range) —
+  // cuts by created_at, same as every other screen using resolvePeriodRange.
+  const { start: periodStart, end: periodEnd } = resolvePeriodRange(query);
+  if (periodStart) {
+    params.push(periodStart.toISOString());
+    conditions.push(`created_at >= $${params.length}`);
+  }
+  if (periodEnd) {
+    params.push(periodEnd.toISOString());
+    conditions.push(`created_at <= $${params.length}`);
   }
 
   if (problemIssueIds) {

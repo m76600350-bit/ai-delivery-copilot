@@ -47,8 +47,8 @@ export default function ThroughputWidget({ dashboardFilters, filterOptions, loca
   const localFilterActive = localTeam.length > 0 || localType.length > 0;
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
-      <div className="flex items-center justify-between mb-1">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+      <div className="flex items-center justify-between mb-1 shrink-0">
         <p className="text-sm font-medium text-gray-700">Throughput по неделям</p>
         <div className="flex items-center gap-2">
           <WidgetFilterPopover active={localFilterActive}>
@@ -69,29 +69,31 @@ export default function ThroughputWidget({ dashboardFilters, filterOptions, loca
           {!fullScreen && <WidgetMenu onRemove={onRemove} />}
         </div>
       </div>
-      <p className="text-xs text-gray-400 mb-3">график · закрытые задачи</p>
+      <p className="text-xs text-gray-400 mb-3 shrink-0">график · закрытые задачи</p>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {isLoading ? (
-        <p className="text-sm text-gray-400 py-8 text-center">Загрузка...</p>
-      ) : (
-        <>
-          <div className={`flex items-end gap-2 ${fullScreen ? 'h-64' : 'h-40'}`}>
-            {weeks.map((w) => (
-              <div key={w.label} className="flex-1 flex flex-col items-center gap-1 h-full justify-end min-w-[24px]">
-                <div
-                  className={`w-full rounded-t ${w.isCurrent ? 'bg-gray-300' : 'bg-blue-300'}`}
-                  style={{ height: `${Math.max(2, (w.count / max) * 100)}%` }}
-                  title={`${w.label}: ${w.count} задач`}
-                />
-                <span className="text-[10px] text-gray-500 whitespace-nowrap">{w.label}{w.isCurrent ? '*' : ''}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-2">* неделя не завершена</p>
-        </>
-      )}
+        {isLoading ? (
+          <p className="text-sm text-gray-400 py-8 text-center">Загрузка...</p>
+        ) : (
+          <>
+            <div className={`flex items-end gap-2 ${fullScreen ? 'h-64' : 'h-40'}`}>
+              {weeks.map((w) => (
+                <div key={w.label} className="flex-1 flex flex-col items-center gap-1 h-full justify-end min-w-[24px]">
+                  <div
+                    className={`w-full rounded-t ${w.isCurrent ? 'bg-gray-300' : 'bg-blue-300'}`}
+                    style={{ height: `${Math.max(2, (w.count / max) * 100)}%` }}
+                    title={`${w.label}: ${w.count} задач`}
+                  />
+                  <span className="text-[10px] text-gray-500 whitespace-nowrap">{w.label}{w.isCurrent ? '*' : ''}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2 shrink-0">* неделя не завершена</p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

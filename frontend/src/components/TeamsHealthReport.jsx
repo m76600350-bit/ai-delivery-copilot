@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getTeamsHealthReport, exportTeamsHealthCsv } from '../api.js';
+import { getTeamsHealthReport, exportTeamsHealthCsv, getTaskFilters } from '../api.js';
+import FilterBar from './FilterBar.jsx';
 
 const HEALTH_LABEL = { normal: 'норма', risk: 'риск', overload: 'перегруз', insufficient_data: 'недостаточно данных' };
 const HEALTH_CLASS = {
@@ -30,13 +31,20 @@ function Sparkline({ values }) {
   );
 }
 
-// filters here supplies Проект/Команда/Тип (4.3) plus Период (3.1) — passed
-// straight through to computeTeamsReport, same as the Команды screen itself.
-export default function TeamsHealthReport({ jiraConnected, filters }) {
+// filters is the same shared Проект/Команда/Тип/Статус/Приоритет/Период
+// state Дашборд/Задачи/Команды use (4.1) — passed straight through to
+// computeTeamsReport, same as the Команды screen itself.
+export default function TeamsHealthReport({ jiraConnected, filters, onFilterChange, onResetFilters }) {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [filterOptions, setFilterOptions] = useState({ statuses: [], teams: [], types: [], priorities: [], projects: [] });
+
+  useEffect(() => {
+    if (!jiraConnected) return;
+    getTaskFilters().then(setFilterOptions).catch(() => {});
+  }, [jiraConnected]);
 
   useEffect(() => {
     if (!jiraConnected) return;
@@ -48,6 +56,11 @@ export default function TeamsHealthReport({ jiraConnected, filters }) {
       project: filters.project.length ? filters.project : undefined,
       team: filters.team.length ? filters.team : undefined,
       type: filters.type.length ? filters.type : undefined,
+      status: filters.status.length ? filters.status : undefined,
+      priority: filters.priority.length ? filters.priority : undefined,
+      period: filters.period !== 'all' ? filters.period : undefined,
+      periodStart: filters.periodStart || undefined,
+      periodEnd: filters.periodEnd || undefined,
     })
       .then((data) => {
         if (!cancelled) setReport(data);
@@ -62,7 +75,7 @@ export default function TeamsHealthReport({ jiraConnected, filters }) {
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters.project, filters.team, filters.type]);
+  }, [jiraConnected, filters]);
 
   if (!jiraConnected) {
     return (
@@ -98,6 +111,8 @@ export default function TeamsHealthReport({ jiraConnected, filters }) {
 
   return (
     <div className="space-y-6">
+      <FilterBar options={filterOptions} filters={filters} onChange={onFilterChange} onReset={onResetFilters} />
+
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-800">Здоровье команд</h2>

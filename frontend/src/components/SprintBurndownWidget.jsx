@@ -66,8 +66,8 @@ export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen })
   }, [sprint]);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
-      <div className="flex items-center justify-between mb-1">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+      <div className="flex items-center justify-between mb-1 shrink-0">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-gray-700">Burndown спринта{sprint ? ` ${sprint.name || sprint.id}` : ''}</p>
         </div>
@@ -91,7 +91,7 @@ export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen })
         </div>
       </div>
 
-      <div className="mb-3">
+      <div className="mb-3 shrink-0">
         <select
           value={sprintId ?? ''}
           onChange={(e) => setSprintId(e.target.value)}
@@ -104,15 +104,17 @@ export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen })
         {subtitle && <span className="text-xs text-gray-400 ml-2">график · {subtitle}</span>}
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {isLoading ? (
-        <p className="text-sm text-gray-400 py-8 text-center">Загрузка...</p>
-      ) : !sprint ? (
-        <p className="text-sm text-gray-400 py-8 text-center">Нет спринтов для отображения</p>
-      ) : (
-        <BurndownChart data={report.burndown} lagSp={lagSp} />
-      )}
+        {isLoading ? (
+          <p className="text-sm text-gray-400 py-8 text-center">Загрузка...</p>
+        ) : !sprint ? (
+          <p className="text-sm text-gray-400 py-8 text-center">Нет спринтов для отображения</p>
+        ) : (
+          <BurndownChart data={report.burndown} lagSp={lagSp} />
+        )}
+      </div>
     </div>
   );
 }

@@ -1,24 +1,36 @@
 import React from 'react';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
-
-export const PERIOD_OPTIONS = [
-  { value: 'all', label: 'Всё время' },
-  { value: '7', label: 'Последние 7 дней' },
-  { value: '30', label: 'Последние 30 дней' },
-  { value: '90', label: 'Последние 90 дней' },
-];
+import PeriodFilter from './PeriodFilter.jsx';
 
 // Fixed enum, not derived from the DB — matches the "блокер"/"зависла"
 // categories lib/problemIssues classifies on the backend.
 export const PROBLEM_OPTIONS = ['Блокер', 'Зависла'];
 
 // Shared shape for the Проект/Команда/Тип задачи/Статус/Приоритет/Период
-// filter set — used by both Dashboard and Tasks (via useSharedFilters), kept
-// in one place so the two screens can't drift apart. `problem` rides along
-// in the same shared/persisted object (so it resets with the rest via
-// "Сброс"), but only Tasks actually renders a control for it — see
+// filter set — used by Дашборд/Задачи/Команды/Отчёты (via useSharedFilters),
+// kept in one place so those screens can't drift apart. `problem` rides
+// along in the same shared/persisted object (so it resets with the rest via
+// "Сброс"), but only Задачи actually renders a control for it — see
 // `showProblem` below.
-export const EMPTY_FILTERS = { project: [], team: [], type: [], status: [], priority: [], period: 'all', problem: [] };
+//
+// NOTE: the spec for this filter set also calls for an "Эпик" filter —
+// deliberately NOT included here. The issues table has no epic name/id
+// captured anywhere (checked routes/jira.js's sync — no epic link field is
+// even fetched, let alone stored), so there's nothing to show the user
+// besides a raw Jira key, and the spec explicitly says to ask rather than
+// guess at that display. Flagged to the user; add `epic` here (plus its
+// MultiSelectFilter row below) once that's resolved.
+export const EMPTY_FILTERS = {
+  project: [],
+  team: [],
+  type: [],
+  status: [],
+  priority: [],
+  period: 'all',
+  periodStart: null,
+  periodEnd: null,
+  problem: [],
+};
 
 export function hasActiveFilters(filters) {
   return (
@@ -33,12 +45,11 @@ export function hasActiveFilters(filters) {
 }
 
 // Renders the Проект/Команда/Тип задачи/Статус/Приоритет/Период controls
-// plus a "Сброс" button — identical on Dashboard and Tasks so filtering
-// behaves the same way in both places. `options` supplies the choices for
-// each dropdown (Dashboard derives them from already-loaded issues, Tasks
-// fetches them from the backend), while `filters`/`onChange`/`onReset` are
-// the shared, localStorage-persisted state from useSharedFilters.
-// `showProblem` additionally renders the Задачи-only "Проблема" filter.
+// plus a "Сброс" button — identical on Дашборд/Задачи/Команды/Отчёты so
+// filtering behaves the same way everywhere. `options` supplies the choices
+// for each dropdown, while `filters`/`onChange`/`onReset` are the shared,
+// localStorage-persisted state from useSharedFilters. `showProblem`
+// additionally renders the Задачи-only "Проблемы" filter.
 export default function FilterBar({ options, filters, onChange, onReset, showProblem }) {
   return (
     <div className="flex flex-wrap items-center gap-3 bg-white rounded-lg border border-gray-200 p-3">
@@ -49,17 +60,18 @@ export default function FilterBar({ options, filters, onChange, onReset, showPro
       <MultiSelectFilter label="Статус" options={options.statuses} selected={filters.status} onChange={(v) => onChange('status', v)} />
       <MultiSelectFilter label="Приоритет" options={options.priorities} selected={filters.priority} onChange={(v) => onChange('priority', v)} />
       {showProblem && (
-        <MultiSelectFilter label="Проблема" options={PROBLEM_OPTIONS} selected={filters.problem} onChange={(v) => onChange('problem', v)} />
+        <MultiSelectFilter label="Проблемы" options={PROBLEM_OPTIONS} selected={filters.problem} onChange={(v) => onChange('problem', v)} />
       )}
-      <select
-        value={filters.period}
-        onChange={(e) => onChange('period', e.target.value)}
-        className={`border rounded px-3 py-1.5 text-sm ${filters.period !== 'all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700'}`}
-      >
-        {PERIOD_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
+      <PeriodFilter
+        period={filters.period}
+        periodStart={filters.periodStart}
+        periodEnd={filters.periodEnd}
+        onChange={({ period, periodStart, periodEnd }) => {
+          onChange('period', period);
+          onChange('periodStart', periodStart);
+          onChange('periodEnd', periodEnd);
+        }}
+      />
       {hasActiveFilters(filters) && (
         <button onClick={onReset} className="text-xs text-blue-600 hover:underline">
           Сброс

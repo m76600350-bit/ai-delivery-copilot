@@ -3,12 +3,13 @@ const { ensureSchema, getPool } = require('../db');
 const { getStoredToken } = require('../lib/jiraAuth');
 const { computeProblemIssues, buildProblemRows } = require('../lib/problemIssues');
 const { computeTeamsReport } = require('./teams');
+const { resolvePeriodRange } = require('../lib/period');
 
 const router = express.Router();
 
 // The full catalog of widget types the library modal can offer — also used
 // to validate POST /widgets/:type so an unknown type can't be persisted.
-const WIDGET_TYPES = ['stats_cards', 'by_status', 'by_team', 'by_type', 'attention', 'teams_summary', 'throughput_weekly', 'sprint_burndown'];
+const WIDGET_TYPES = ['by_status', 'by_team', 'by_type', 'attention', 'teams_summary', 'throughput_weekly', 'sprint_burndown'];
 
 const PREVIEW_LIMIT = 10;
 
@@ -108,10 +109,9 @@ router.get('/attention', async (req, res) => {
     const typeFilter = toArray(req.query.type);
     const statusFilter = toArray(req.query.status);
     const priorityFilter = toArray(req.query.priority);
-    const periodDays = Math.max(0, Math.trunc(Number(req.query.periodDays)) || 0);
+    const { start: periodStart, end: periodEnd } = resolvePeriodRange(req.query);
 
     const problemData = await computeProblemIssues();
-    const cutoffMs = periodDays > 0 ? Date.now() - periodDays * 86400000 : null;
 
     const candidateIds = [...new Set([...problemData.blockedIssueIds, ...problemData.agingByIssueId.keys()])].filter((id) => {
       const issue = problemData.issuesById.get(id);
@@ -121,10 +121,9 @@ router.get('/attention', async (req, res) => {
       if (typeFilter.length && !typeFilter.includes(issue.issue_type)) return false;
       if (statusFilter.length && !statusFilter.includes(issue.status)) return false;
       if (priorityFilter.length && !priorityFilter.includes(issue.priority)) return false;
-      if (cutoffMs != null) {
-        const created = issue.created_at ? new Date(issue.created_at).getTime() : null;
-        if (!created || created < cutoffMs) return false;
-      }
+      const createdMs = issue.created_at ? new Date(issue.created_at).getTime() : null;
+      if (periodStart && (!createdMs || createdMs < periodStart.getTime())) return false;
+      if (periodEnd && (!createdMs || createdMs > periodEnd.getTime())) return false;
       return true;
     });
 
@@ -206,7 +205,9 @@ router.get('/teams-summary', async (req, res) => {
     await ensureSchema();
     const pool = getPool();
     const { where, params } = buildIssueFilterConditions(req.query);
-    const periodDays = Math.max(0, Math.trunc(Number(req.query.periodDays)) || 0) || DEFAULT_CURRENT_WINDOW_DAYS;
+    const { start: periodStart, end: periodEnd } = resolvePeriodRange(req.query);
+    const periodStartMs = periodStart ? periodStart.getTime() : Date.now() - DEFAULT_CURRENT_WINDOW_DAYS * 86400000;
+    const periodEndMs = periodEnd ? periodEnd.getTime() : Date.now();
 
     const [{ rows: issues }, teamsReport] = await Promise.all([
       pool.query(
@@ -230,14 +231,16 @@ router.get('/teams-summary', async (req, res) => {
       }
     }
 
-    const periodCutoffMs = Date.now() - periodDays * 86400000;
-
     const teams = [...byTeam.entries()]
       .map(([team, g]) => {
         const historicalValues = g.doneWithCycle.map((r) => Number(r.cycle_time));
         const historicalAvg = historicalValues.length ? avg(historicalValues) : null;
         const currentValues = g.doneWithCycle
-          .filter((r) => r.resolved_at && new Date(r.resolved_at).getTime() >= periodCutoffMs)
+          .filter((r) => {
+            if (!r.resolved_at) return false;
+            const t = new Date(r.resolved_at).getTime();
+            return t >= periodStartMs && t <= periodEndMs;
+          })
           .map((r) => Number(r.cycle_time));
 
         let trend = null;

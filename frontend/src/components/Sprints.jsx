@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getSprintsFilters, getSprintsReport } from '../api.js';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
 import BurndownChart from './BurndownChart.jsx';
+import SectionHeader from './SectionHeader.jsx';
 
 function fmtShortDate(value) {
   if (!value) return '—';
@@ -111,9 +112,15 @@ function exportHistoryCsv(history) {
   URL.revokeObjectURL(url);
 }
 
-export default function Sprints({ jiraConnected }) {
-  const [filters, setFilters] = useState({ sprint: '', team: [], type: [] });
-  const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], types: [], defaultSprint: null });
+// Спринты keeps its OWN separate filter state (Спринт + Команда only) —
+// deliberately not part of the shared Проект/Команда/Тип/Статус/Приоритет/
+// Период filter set the rest of the app uses (4.3): a sprint report is
+// scoped to one sprint by definition, so Период wouldn't mean anything
+// here, and the mockup for this screen never showed Проект/Тип/Статус/
+// Приоритет either.
+export default function Sprints({ jiraConnected, onSyncJira, lastSyncedAt }) {
+  const [filters, setFilters] = useState({ sprint: '', team: [] });
+  const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], defaultSprint: null });
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -137,7 +144,6 @@ export default function Sprints({ jiraConnected }) {
     getSprintsReport({
       sprint: filters.sprint,
       team: filters.team.length ? filters.team : undefined,
-      type: filters.type.length ? filters.type : undefined,
     })
       .then((data) => {
         if (!cancelled) setReport(data);
@@ -186,6 +192,8 @@ export default function Sprints({ jiraConnected }) {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      <SectionHeader title="Спринты" lastSyncedAt={lastSyncedAt} onSync={onSyncJira} />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <select
@@ -198,7 +206,6 @@ export default function Sprints({ jiraConnected }) {
             ))}
           </select>
           <MultiSelectFilter label="Команда" options={filterOptions.teams} selected={filters.team} onChange={(v) => updateFilter('team', v)} />
-          <MultiSelectFilter label="Тип задачи" options={filterOptions.types} selected={filters.type} onChange={(v) => updateFilter('type', v)} />
         </div>
         {sprint && (
           <p className="text-sm text-gray-500">

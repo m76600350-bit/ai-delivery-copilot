@@ -31,8 +31,9 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
   const [error, setError] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
 
-  const effectivePeriod = localPeriod && localPeriod !== 'inherit' ? localPeriod : dashboardFilters.period;
-  const localFilterActive = Boolean(localPeriod && localPeriod !== 'inherit');
+  const isLocalOverride = Boolean(localPeriod && localPeriod !== 'inherit');
+  const effectivePeriod = isLocalOverride ? localPeriod : dashboardFilters.period;
+  const localFilterActive = isLocalOverride;
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +46,12 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
       type: dashboardFilters.type.length ? dashboardFilters.type : undefined,
       status: dashboardFilters.status.length ? dashboardFilters.status : undefined,
       priority: dashboardFilters.priority.length ? dashboardFilters.priority : undefined,
-      periodDays: effectivePeriod !== 'all' ? effectivePeriod : undefined,
+      // The local funnel only offers presets (never "custom"), so periodStart/
+      // periodEnd only need forwarding when inheriting the dashboard's own
+      // Период selection, which can be a custom range.
+      period: effectivePeriod,
+      periodStart: !isLocalOverride ? dashboardFilters.periodStart : undefined,
+      periodEnd: !isLocalOverride ? dashboardFilters.periodEnd : undefined,
       full: fullScreen ? '1' : undefined,
     })
       .then((result) => {
@@ -64,8 +70,8 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
   }, [dashboardFilters, effectivePeriod, fullScreen]);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+      <div className="flex items-center justify-between mb-3 shrink-0">
         <p className="text-sm font-medium text-gray-700">Требует внимания</p>
         <div className="flex items-center gap-2">
           <WidgetFilterPopover active={localFilterActive}>
@@ -91,52 +97,54 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {isLoading ? (
-        <p className="text-sm text-gray-400 py-4">Загрузка...</p>
-      ) : data.items.length === 0 ? (
-        <p className="text-sm text-gray-400 py-4">Проблемных задач не обнаружено</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 border-b border-gray-200">
-                <th className="py-2 pr-4">Задача</th>
-                <th className="py-2 pr-4">Команда</th>
-                <th className="py-2 pr-4">Исполнитель</th>
-                <th className="py-2 pr-4">Причина</th>
-                <th className="py-2 pr-4">Показатель</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((item) => (
-                <tr
-                  key={item.id}
-                  onClick={() => setSelectedTask(item)}
-                  className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                >
-                  <td className="py-2 pr-4">
-                    <span className="font-medium text-gray-700">{item.issueKey}</span>{' '}
-                    <span className="text-gray-500">{item.summary}</span>
-                  </td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{item.team}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">{item.assignee || 'не назначен'}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${PROBLEM_BADGE_CLASS[item.problem]}`}>
-                      {item.problem}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 whitespace-nowrap text-gray-500">{formatMetric(item)}</td>
+        {isLoading ? (
+          <p className="text-sm text-gray-400 py-4">Загрузка...</p>
+        ) : data.items.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4">Проблемных задач не обнаружено</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b border-gray-200">
+                  <th className="py-2 pr-4">Задача</th>
+                  <th className="py-2 pr-4">Команда</th>
+                  <th className="py-2 pr-4">Исполнитель</th>
+                  <th className="py-2 pr-4">Причина</th>
+                  <th className="py-2 pr-4">Показатель</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {data.items.map((item) => (
+                  <tr
+                    key={item.id}
+                    onClick={() => setSelectedTask(item)}
+                    className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <td className="py-2 pr-4">
+                      <span className="font-medium text-gray-700">{item.issueKey}</span>{' '}
+                      <span className="text-gray-500">{item.summary}</span>
+                    </td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{item.team}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{item.assignee || 'не назначен'}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${PROBLEM_BADGE_CLASS[item.problem]}`}>
+                        {item.problem}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 whitespace-nowrap text-gray-500">{formatMetric(item)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {!isLoading && !fullScreen && data.total > 10 && (
-        <p className="text-xs text-gray-400 mt-3">
+        <p className="text-xs text-gray-400 mt-3 shrink-0">
           {data.total} задач всего ·{' '}
           <button
             onClick={() => onNavigateToTasks?.({ problem: ['Блокер', 'Зависла'] })}
