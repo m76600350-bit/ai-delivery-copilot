@@ -253,30 +253,35 @@ function sprintOutcome(sprint, agg) {
   return actualPct >= expectedPct ? 'on_track' : 'at_risk';
 }
 
-// GET /api/sprints/report?sprint=<id>&team=...&type=... — everything the
-// Спринты screen needs in one call: KPIs/burndown/CFD/risks for the
-// selected sprint, plus the independent "История спринтов" table (always
-// the active sprint + up to MAX_HISTORY_SPRINTS-1 most recent closed ones,
-// regardless of which sprint is selected).
-router.get('/report', async (req, res) => {
-  try {
-    await ensureSchema();
-    const pool = getPool();
+// Everything the Спринты screen needs for one sprint in one call:
+// KPIs/burndown/CFD/risks for the selected sprint, plus the independent
+// "История спринтов" table (always the active sprint + up to
+// MAX_HISTORY_SPRINTS-1 most recent closed ones, regardless of which sprint
+// is selected) — extracted out of the route handler so the Отчёты screen's
+// "Итоги спринта" report can reuse the exact same burndown/forecast/scope-
+// creep math instead of re-deriving it (same reasoning as
+// teams.js's computeTeamsReport). Also returns `selectedIssues`, the raw
+// per-issue rows for the selected sprint — not needed by the Спринты screen
+// itself (which only reads the aggregates), but that's what the report's
+// scope-creep list, carried-over list, reopen rate and "top-3 longest" need.
+async function computeSprintReport(query) {
+  await ensureSchema();
+  const pool = getPool();
 
-    const teamFilter = toArray(req.query.team);
-    const typeFilter = toArray(req.query.type);
+  const teamFilter = toArray(query.team);
+  const typeFilter = toArray(query.type);
 
-    const { rows: allSprints } = await pool.query(
-      `SELECT id, name, state, start_date, end_date, complete_date FROM sprints`
-    );
+  const { rows: allSprints } = await pool.query(
+    `SELECT id, name, state, start_date, end_date, complete_date FROM sprints`
+  );
 
-    if (!allSprints.length) {
-      return res.json({ sprint: null, kpis: null, burndown: [], cfd: [], risks: [], history: [] });
-    }
+  if (!allSprints.length) {
+    return { sprint: null, kpis: null, burndown: [], cfd: [], risks: [], history: [], selectedIssues: [] };
+  }
 
-    const activeSprint = allSprints.find((s) => s.state === 'active') || null;
+  const activeSprint = allSprints.find((s) => s.state === 'active') || null;
 
-    let selectedSprintId = parseInt(req.query.sprint, 10);
+  let selectedSprintId = parseInt(query.sprint, 10);
     if (!Number.isFinite(selectedSprintId) || !allSprints.some((s) => s.id === selectedSprintId)) {
       const fallback = resolveActiveOrLatestClosed(allSprints);
       selectedSprintId = fallback ? fallback.id : null;
@@ -307,7 +312,8 @@ router.get('/report', async (req, res) => {
     const { rows: issueSprintRows } = await pool.query(
       `SELECT isp.issue_id, isp.sprint_id, isp.added_after_sprint_start,
               i.issue_key, i.summary, i.team, i.issue_type, i.status, i.status_category,
-              i.story_points, i.assignee, i.updated_at, i.created_at, i.cycle_time, i.resolved_at
+              i.story_points, i.assignee, i.updated_at, i.created_at, i.started_at,
+              i.cycle_time, i.resolved_at, i.reopen_count
        FROM issue_sprints isp
        JOIN issues i ON i.id = isp.issue_id
        WHERE isp.sprint_id = ANY($${sprintIdsParamIdx}::int[]) AND ${conditions.join(' AND ')}`,
@@ -401,39 +407,66 @@ router.get('/report', async (req, res) => {
         };
       });
 
-    res.json({
-      sprint: selectedSprint
-        ? {
-            id: selectedSprint.id,
-            name: selectedSprint.name,
-            state: selectedSprint.state,
-            startDate: selectedSprint.start_date,
-            endDate: selectedSprint.end_date,
-            daysRemaining,
-          }
-        : null,
-      kpis: agg
-        ? {
-            takenSp: agg.takenSp,
-            takenCount: agg.takenCount,
-            doneSp: agg.doneSp,
-            doneSpPct: agg.doneSpPct,
-            forecastPct,
-            addedAfterStartSp: agg.addedAfterStartSp,
-            scopeCreepPct: agg.scopeCreepPct,
-            risksCount: risks.length,
-            risksCategories: [...new Set(risks.map((r) => r.problem))],
-            lagSp,
-          }
-        : null,
-      burndown,
-      cfd,
-      risks,
-      history,
-    });
+  return {
+    sprint: selectedSprint
+      ? {
+          id: selectedSprint.id,
+          name: selectedSprint.name,
+          state: selectedSprint.state,
+          startDate: selectedSprint.start_date,
+          endDate: selectedSprint.end_date,
+          daysRemaining,
+        }
+      : null,
+    kpis: agg
+      ? {
+          takenSp: agg.takenSp,
+          takenCount: agg.takenCount,
+          doneSp: agg.doneSp,
+          doneSpPct: agg.doneSpPct,
+          forecastPct,
+          addedAfterStartSp: agg.addedAfterStartSp,
+          scopeCreepPct: agg.scopeCreepPct,
+          risksCount: risks.length,
+          risksCategories: [...new Set(risks.map((r) => r.problem))],
+          lagSp,
+        }
+      : null,
+    burndown,
+    cfd,
+    risks,
+    history,
+    selectedIssues: selectedRows.map((r) => ({
+      issueKey: r.issue_key,
+      summary: r.summary,
+      team: r.team,
+      issueType: r.issue_type,
+      status: r.status,
+      statusCategory: r.status_category,
+      storyPoints: r.story_points,
+      assignee: r.assignee,
+      addedAfterSprintStart: r.added_after_sprint_start,
+      updatedAt: r.updated_at,
+      createdAt: r.created_at,
+      startedAt: r.started_at,
+      cycleTime: r.cycle_time,
+      resolvedAt: r.resolved_at,
+      reopenCount: r.reopen_count,
+    })),
+  };
+}
+
+// GET /api/sprints/report?sprint=<id>&team=...&type=... — thin wrapper
+// around computeSprintReport for the Спринты screen itself.
+router.get('/report', async (req, res) => {
+  try {
+    const data = await computeSprintReport(req.query);
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 module.exports = router;
+module.exports.computeSprintReport = computeSprintReport;
+module.exports.resolveActiveOrLatestClosed = resolveActiveOrLatestClosed;

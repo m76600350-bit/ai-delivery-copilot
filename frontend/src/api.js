@@ -151,4 +151,34 @@ export async function exportReportCsv(payload) {
   return res.data;
 }
 
+export async function getSprintSummaryReport(params) {
+  const res = await api.get('/reports/sprint-summary', { params });
+  return res.data;
+}
+
+export async function exportSprintSummaryCsv(payload) {
+  const res = await api.post('/reports/export-sprint', payload, { responseType: 'blob' });
+  return res.data;
+}
+
+export async function getQualityReport(params) {
+  const res = await api.get('/reports/quality', { params });
+  return res.data;
+}
+
+export async function exportQualityCsv(payload) {
+  const res = await api.post('/reports/export-quality', payload, { responseType: 'blob' });
+  return res.data;
+}
+
+export async function getTeamsHealthReport(params) {
+  const res = await api.get('/reports/teams-health', { params });
+  return res.data;
+}
+
+export async function exportTeamsHealthCsv(payload) {
+  const res = await api.post('/reports/export-teams-health', payload, { responseType: 'blob' });
+  return res.data;
+}
+
 export default api;
