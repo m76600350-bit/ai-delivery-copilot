@@ -67,31 +67,50 @@ function resolveLastSprint(teamSprints) {
   return closed[0] || null;
 }
 
-// GET /api/teams — the full aggregated report backing the "Команды" screen:
-// the main per-team table (2.2), plus everything a team's detail card needs
-// (2.3/2.4) and the "Здоровье последнего спринта" table (2.5), computed
-// server-side in JS from a handful of already-synced-data queries rather
-// than one enormous SQL query.
-router.get('/', async (req, res) => {
-  try {
-    await ensureSchema();
-    const pool = getPool();
+// The full aggregated report backing the "Команды" screen: the main
+// per-team table (2.2), plus everything a team's detail card needs (2.3/2.4)
+// and the "Здоровье последнего спринта" table (2.5), computed server-side in
+// JS from a handful of already-synced-data queries rather than one enormous
+// SQL query. Extracted out of the route handler so the Отчёты screen's
+// "План vs факт по командам" table (same last-sprint taken/done SP + health
+// signals) can reuse it instead of re-deriving team health independently.
+// query additionally accepts type/status/priority (not used by the Команды
+// screen itself, which has no such filters, but needed so a report scoped by
+// the shared Dashboard/Tasks filter set narrows the same issue population).
+async function computeTeamsReport(query) {
+  await ensureSchema();
+  const pool = getPool();
 
-    const teamFilter = toArray(req.query.team);
-    const projectFilter = toArray(req.query.project);
-    // Sprint ids are our internal `sprints.id` (see /filters), not Jira's.
-    const sprintFilter = toArray(req.query.sprint).map((v) => parseInt(v, 10)).filter((n) => Number.isFinite(n));
+  const teamFilter = toArray(query.team);
+  const projectFilter = toArray(query.project);
+  const typeFilter = toArray(query.type);
+  const statusFilter = toArray(query.status);
+  const priorityFilter = toArray(query.priority);
+  // Sprint ids are our internal `sprints.id` (see /filters), not Jira's.
+  const sprintFilter = toArray(query.sprint).map((v) => parseInt(v, 10)).filter((n) => Number.isFinite(n));
 
-    const conditions = ['is_deleted = false'];
-    const params = [];
-    if (projectFilter.length) {
-      params.push(projectFilter);
-      conditions.push(`COALESCE(project, 'Без проекта') = ANY($${params.length}::text[])`);
-    }
-    if (teamFilter.length) {
-      params.push(teamFilter);
-      conditions.push(`COALESCE(team, 'Без команды') = ANY($${params.length}::text[])`);
-    }
+  const conditions = ['is_deleted = false'];
+  const params = [];
+  if (projectFilter.length) {
+    params.push(projectFilter);
+    conditions.push(`COALESCE(project, 'Без проекта') = ANY($${params.length}::text[])`);
+  }
+  if (teamFilter.length) {
+    params.push(teamFilter);
+    conditions.push(`COALESCE(team, 'Без команды') = ANY($${params.length}::text[])`);
+  }
+  if (typeFilter.length) {
+    params.push(typeFilter);
+    conditions.push(`COALESCE(issue_type, 'Без типа') = ANY($${params.length}::text[])`);
+  }
+  if (statusFilter.length) {
+    params.push(statusFilter);
+    conditions.push(`COALESCE(status, 'Без статуса') = ANY($${params.length}::text[])`);
+  }
+  if (priorityFilter.length) {
+    params.push(priorityFilter);
+    conditions.push(`COALESCE(priority, 'Без приоритета') = ANY($${params.length}::text[])`);
+  }
 
     const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }, { rows: roleRows }] = await Promise.all([
       pool.query(
@@ -337,10 +356,18 @@ router.get('/', async (req, res) => {
       };
     });
 
-    res.json({ teams });
+  return { teams };
+}
+
+// GET /api/teams — see computeTeamsReport above for what this returns.
+router.get('/', async (req, res) => {
+  try {
+    const data = await computeTeamsReport(req.query);
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 module.exports = router;
+module.exports.computeTeamsReport = computeTeamsReport;

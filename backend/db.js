@@ -262,6 +262,17 @@ async function ensureSchema() {
         ('by_type', 3, true)
       ) AS defaults(widget_type, position, enabled)
       WHERE NOT EXISTS (SELECT 1 FROM dashboard_widgets);
+
+      -- Manual edits to the "Отчёты" screen's auto-generated stakeholder
+      -- summary, keyed by the exact report scope (date range + project
+      -- filter) it was written for — a different period or project
+      -- selection gets its own draft rather than overwriting this one.
+      -- Report data itself is always computed on the fly, never stored.
+      CREATE TABLE IF NOT EXISTS report_summary_draft (
+        period_key TEXT PRIMARY KEY,
+        summary TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

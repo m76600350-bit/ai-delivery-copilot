@@ -5,6 +5,7 @@ const jiraRouter = require('./routes/jira');
 const teamsRouter = require('./routes/teams');
 const sprintsRouter = require('./routes/sprints');
 const dashboardRouter = require('./routes/dashboard');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 
@@ -16,6 +17,7 @@ app.use('/api/jira', jiraRouter);
 app.use('/api/teams', teamsRouter);
 app.use('/api/sprints', sprintsRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/reports', reportsRouter);
 
 // Vercel imports this file as a serverless function and calls the exported
 // app directly, so app.listen() must only run for local/standalone use.

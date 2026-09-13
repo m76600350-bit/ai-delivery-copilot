@@ -126,4 +126,19 @@ export async function getDashboardAttention(params) {
   return res.data;
 }
 
+export async function getReportStatus(params) {
+  const res = await api.get('/reports/status', { params });
+  return res.data;
+}
+
+export async function saveReportSummary(periodKey, summary) {
+  const res = await api.post('/reports/summary', { periodKey, summary });
+  return res.data;
+}
+
+export async function exportReportCsv(payload) {
+  const res = await api.post('/reports/export', payload, { responseType: 'blob' });
+  return res.data;
+}
+
 export default api;

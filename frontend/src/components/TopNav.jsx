@@ -5,7 +5,7 @@ const TABS = [
   { key: 'tasks', label: 'Задачи', active: true },
   { key: 'teams', label: 'Команды', active: true },
   { key: 'sprints', label: 'Спринты', active: true },
-  { key: 'reports', label: 'Отчёты', active: false },
+  { key: 'reports', label: 'Отчёты', active: true },
   { key: 'settings', label: 'Настройки', active: true },
 ];
 
