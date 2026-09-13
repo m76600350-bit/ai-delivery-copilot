@@ -177,7 +177,9 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'teams' && <Teams jiraConnected={jiraStatus?.connected || false} />}
+        {activeTab === 'teams' && (
+          <Teams jiraConnected={jiraStatus?.connected || false} onNavigateToTasks={navigateToTasks} />
+        )}
 
         {activeTab === 'sprints' && <Sprints jiraConnected={jiraStatus?.connected || false} />}
 

@@ -215,10 +215,51 @@ function SprintHealthTable({ teams }) {
   );
 }
 
-export default function Teams({ jiraConnected }) {
+// 2.6 — межкомандные "is blocked by" зависимости, уже сгруппированные и
+// отсортированные по убыванию "Макс. ожидание" на бэкенде (computeTeamsReport).
+function CrossTeamDependenciesTable({ dependencies, onNavigateToTasks }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <h3 className="text-sm font-medium text-gray-700 mb-1">Зависимости между командами</h3>
+      <p className="text-xs text-gray-400 mb-3">активные межкомандные блокеры · клик по строке → задачи ожидающей команды</p>
+      {dependencies.length === 0 ? (
+        <p className="text-xs text-gray-400">Межкомандных зависимостей не обнаружено</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 border-b border-gray-200">
+                <th className="py-2 pr-4">Кто ждёт</th>
+                <th className="py-2 pr-4">Кого ждёт</th>
+                <th className="py-2 pr-4">Задач</th>
+                <th className="py-2 pr-4">Макс. ожидание</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dependencies.map((d) => (
+                <tr
+                  key={`${d.waitingTeam} :: ${d.blockingTeam}`}
+                  onClick={() => onNavigateToTasks?.({ team: [d.waitingTeam], problem: ['Блокер'] })}
+                  className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                >
+                  <td className="py-2 pr-4 font-medium text-gray-700 whitespace-nowrap">{d.waitingTeam}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap">{d.blockingTeam}</td>
+                  <td className="py-2 pr-4">{d.count}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap">{d.maxWaitDays} д</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Teams({ jiraConnected, onNavigateToTasks }) {
   const [filters, setFilters] = useState({ sprint: [], team: [], project: [] });
   const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], projects: [] });
-  const [report, setReport] = useState({ teams: [] });
+  const [report, setReport] = useState({ teams: [], crossTeamDependencies: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedTeam, setExpandedTeam] = useState(null);
@@ -352,9 +393,7 @@ export default function Teams({ jiraConnected }) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg border border-dashed border-gray-300 p-6 flex items-center justify-center text-center text-sm text-gray-400">
-          Скоро: анализ зависимостей между командами
-        </div>
+        <CrossTeamDependenciesTable dependencies={report.crossTeamDependencies || []} onNavigateToTasks={onNavigateToTasks} />
         <SprintHealthTable teams={report.teams} />
       </div>
     </div>

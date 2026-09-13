@@ -112,7 +112,7 @@ async function computeTeamsReport(query) {
     conditions.push(`COALESCE(priority, 'Без приоритета') = ANY($${params.length}::text[])`);
   }
 
-    const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }, { rows: roleRows }] = await Promise.all([
+    const [{ rows: issues }, { rows: sprints }, { rows: issueSprints }, { rows: links }, { rows: limitRows }, { rows: roleRows }, { rows: crossTeamLinkRows }] = await Promise.all([
       pool.query(
         `SELECT id, issue_key, COALESCE(team, 'Без команды') AS team, project, issue_type, status,
                 status_category, cycle_time, resolved_at, story_points, assignee, updated_at, created_at
@@ -127,6 +127,24 @@ async function computeTeamsReport(query) {
       ),
       pool.query('SELECT team, status_name, role, limit_value FROM wip_limits WHERE limit_value IS NOT NULL'),
       pool.query('SELECT team, role, count(*)::int AS headcount FROM team_roles GROUP BY team, role'),
+      // Cross-team dependencies (2.6) — the Команда filter is meant to
+      // scope the main per-team table (which of its own issues a team's row
+      // reflects), not to hide half of a cross-team pair: filtering by
+      // team=Beta should still surface "Alpha ждёт Beta" even though none of
+      // Beta's own issues are blocked. So this deliberately queries BOTH
+      // sides of every link independent of teamFilter (only project is
+      // applied, matching what the pair's issues actually belong to), and
+      // the team filter is instead applied as an OR-match against the
+      // resulting pairs below.
+      pool.query(
+        `SELECT il.issue_id, COALESCE(i1.team, 'Без команды') AS blocked_team, i1.project AS blocked_project,
+                COALESCE(i2.team, 'Без команды') AS blocker_team, i2.project AS blocker_project,
+                i2.status_category AS blocker_status_category, i2.created_at AS blocker_created_at
+         FROM issue_links il
+         JOIN issues i1 ON i1.id = il.issue_id
+         JOIN issues i2 ON i2.id = il.linked_issue_id
+         WHERE il.link_type ILIKE '%blocked by%' AND i1.is_deleted = false AND i2.is_deleted = false`
+      ),
     ]);
 
     // A team's overall WIP limit = sum over its wip_limits rows of
@@ -356,7 +374,33 @@ async function computeTeamsReport(query) {
       };
     });
 
-  return { teams };
+  // --- Зависимости между командами (2.6) — "is blocked by" links where the
+  // blocked issue and its blocker belong to different teams, grouped into
+  // (кто ждёт → кого ждёт) pairs. A link is only counted while still active:
+  // the blocking issue must not yet be done. "Макс. ожидание" is the oldest
+  // still-open blocker in the pair, measured from ITS OWN created_at — the
+  // spec's proxy for "how long has this dependency existed" (there's no
+  // stored "blocked since" timestamp; issue_links is rebuilt fresh every
+  // sync, same reasoning as the "блокер" risk elsewhere in the app).
+  const crossTeamPairs = new Map();
+  for (const row of crossTeamLinkRows) {
+    if (row.blocker_status_category === 'done') continue; // no longer active
+    if (row.blocked_team === row.blocker_team) continue; // same-team, not cross-team
+    if (projectFilter.length && !projectFilter.includes(row.blocked_project) && !projectFilter.includes(row.blocker_project)) continue;
+    if (teamFilter.length && !teamFilter.includes(row.blocked_team) && !teamFilter.includes(row.blocker_team)) continue;
+
+    const key = `${row.blocked_team} :: ${row.blocker_team}`;
+    if (!crossTeamPairs.has(key)) {
+      crossTeamPairs.set(key, { waitingTeam: row.blocked_team, blockingTeam: row.blocker_team, count: 0, maxWaitDays: 0 });
+    }
+    const pair = crossTeamPairs.get(key);
+    pair.count += 1;
+    const waitDays = Math.max(0, Math.floor((Date.now() - new Date(row.blocker_created_at).getTime()) / 86400000));
+    pair.maxWaitDays = Math.max(pair.maxWaitDays, waitDays);
+  }
+  const crossTeamDependencies = [...crossTeamPairs.values()].sort((a, b) => b.maxWaitDays - a.maxWaitDays);
+
+  return { teams, crossTeamDependencies };
 }
 
 // GET /api/teams — see computeTeamsReport above for what this returns.
