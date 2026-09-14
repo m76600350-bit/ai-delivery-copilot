@@ -158,7 +158,9 @@ export default function Sprints({ jiraConnected, onSyncJira, lastSyncedAt }) {
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters]);
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
+  }, [jiraConnected, filters, lastSyncedAt]);
 
   const updateFilter = (field, value) => setFilters((prev) => ({ ...prev, [field]: value }));
 

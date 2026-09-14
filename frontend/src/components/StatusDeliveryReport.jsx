@@ -26,7 +26,7 @@ function WeeklyChart({ data }) {
 // dashboardFilters mirrors the shape FilterBar/useSharedFilters produces —
 // the report respects the same shared Проект/Команда/Тип/Статус/Приоритет/
 // Период selection as Dashboard/Tasks (recomputed whenever it changes).
-export default function StatusDeliveryReport({ jiraConnected, filters, onFilterChange, onResetFilters }) {
+export default function StatusDeliveryReport({ jiraConnected, filters, onFilterChange, onResetFilters, lastSyncedAt }) {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -70,7 +70,9 @@ export default function StatusDeliveryReport({ jiraConnected, filters, onFilterC
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters]);
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
+  }, [jiraConnected, filters, lastSyncedAt]);
 
   if (!jiraConnected) {
     return (

@@ -25,7 +25,7 @@ function KpiCard({ title, value, trend }) {
 // filters here supplies only Проект/Команда/Тип, per spec 4.3 — Спринты
 // screen's own filter bar has never included Статус/Приоритет/Период
 // either (a sprint report is scoped to one sprint, not a date range).
-export default function SprintSummaryReport({ jiraConnected, filters }) {
+export default function SprintSummaryReport({ jiraConnected, filters, lastSyncedAt }) {
   const [report, setReport] = useState(null);
   const [sprintId, setSprintId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,8 +58,10 @@ export default function SprintSummaryReport({ jiraConnected, filters }) {
     return () => {
       cancelled = true;
     };
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jiraConnected, sprintId, filters.team, filters.type]);
+  }, [jiraConnected, sprintId, filters.team, filters.type, lastSyncedAt]);
 
   if (!jiraConnected) {
     return (

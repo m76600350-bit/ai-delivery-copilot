@@ -21,7 +21,7 @@ const SPRINT_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#d97706', '#
 // funnel, both passed straight through to the same GET /api/sprints/report
 // the Спринты screen itself uses, so the two can never compute a sprint's
 // burndown differently.
-export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen }) {
+export default function SprintBurndownWidget({ lastSyncedAt, onRemove, onExpand, fullScreen }) {
   const [filterOptions, setFilterOptions] = useState({ sprints: [], teams: [], types: [], defaultSprint: null });
   const [sprintIds, setSprintIds] = useState([]);
   const [localTeam, setLocalTeam] = useState([]);
@@ -67,7 +67,11 @@ export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen })
     return () => {
       cancelled = true;
     };
-  }, [sprintIds, localTeam, localType]);
+    // lastSyncedAt: refetch after a sync completes — see AttentionWidget's
+    // matching comment for why this is needed (issue status/SP changes
+    // inside the selected sprint(s) otherwise wouldn't show up until some
+    // unrelated selector change happened to trigger a refetch).
+  }, [sprintIds, localTeam, localType, lastSyncedAt]);
 
   const localFilterActive = localTeam.length > 0 || localType.length > 0;
   const isComparing = sprintIds.length > 1;

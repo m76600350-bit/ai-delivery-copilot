@@ -292,6 +292,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
             key={widgetType}
             dashboardFilters={filters}
             siteUrl={siteUrl}
+            lastSyncedAt={lastSyncedAt}
             onNavigateToTasks={onNavigateToTasks}
             onRemove={() => setWidgetEnabled(widgetType, false)}
             localPeriod={localPeriod[widgetType]}
@@ -305,6 +306,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
           <TeamsSummaryWidget
             key={widgetType}
             dashboardFilters={filters}
+            lastSyncedAt={lastSyncedAt}
             onNavigateToTasks={onNavigateToTasks}
             onRemove={() => setWidgetEnabled(widgetType, false)}
             localPeriod={localPeriod[widgetType]}
@@ -318,6 +320,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
           <ThroughputWidget
             key={widgetType}
             dashboardFilters={filters}
+            lastSyncedAt={lastSyncedAt}
             filterOptions={filterOptions}
             localTeam={throughputLocalTeam}
             localType={throughputLocalType}
@@ -332,6 +335,7 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
         return (
           <SprintBurndownWidget
             key={widgetType}
+            lastSyncedAt={lastSyncedAt}
             onRemove={() => setWidgetEnabled(widgetType, false)}
             onExpand={fullScreen ? undefined : () => setExpandedGeneric(widgetType)}
             fullScreen={fullScreen}

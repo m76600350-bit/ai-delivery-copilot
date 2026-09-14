@@ -26,7 +26,7 @@ function formatMetric(item) {
 // dashboardFilters mirrors the shape FilterBar/useSharedFilters produces —
 // this widget respects the same Проект/Команда/Тип/Статус/Приоритет/Период
 // selection as the rest of the Dashboard (4.1), refetching whenever it changes.
-export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSiteUrl, onNavigateToTasks, onRemove, localPeriod, onLocalPeriodChange, onExpand, fullScreen }) {
+export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSiteUrl, lastSyncedAt, onNavigateToTasks, onRemove, localPeriod, onLocalPeriodChange, onExpand, fullScreen }) {
   const [data, setData] = useState({ items: [], total: 0, siteUrl: null });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -68,7 +68,13 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
     return () => {
       cancelled = true;
     };
-  }, [dashboardFilters, effectivePeriod, fullScreen]);
+    // lastSyncedAt: refetch after a sync completes — this widget fetches its
+    // own data via the API rather than reading it off a `stats`/`allIssues`
+    // prop that Dashboard already recomputes on sync, so without this it
+    // kept showing stale блокер/зависла classifications (e.g. a task that
+    // stopped being "зависла" after moving forward stayed flagged) until an
+    // unrelated filter change happened to trigger a refetch.
+  }, [dashboardFilters, effectivePeriod, fullScreen, lastSyncedAt]);
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>

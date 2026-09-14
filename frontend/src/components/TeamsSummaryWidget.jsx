@@ -37,7 +37,7 @@ const PREVIEW_COUNT = 4;
 // same "своё локальное переопределение" pattern the mockup's "период 30 дн"
 // chip shows. fullScreen (set only inside the expand modal) shows every
 // team instead of the top 4.
-export default function TeamsSummaryWidget({ dashboardFilters, localPeriod, onLocalPeriodChange, onNavigateToTasks, onRemove, onExpand, fullScreen }) {
+export default function TeamsSummaryWidget({ dashboardFilters, lastSyncedAt, localPeriod, onLocalPeriodChange, onNavigateToTasks, onRemove, onExpand, fullScreen }) {
   const [data, setData] = useState({ teams: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -74,7 +74,9 @@ export default function TeamsSummaryWidget({ dashboardFilters, localPeriod, onLo
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dashboardFilters, effectivePeriod]);
+    // lastSyncedAt: refetch after a sync completes — see AttentionWidget's
+    // matching comment for why this is needed.
+  }, [dashboardFilters, effectivePeriod, lastSyncedAt]);
 
   const teams = data.teams || [];
   const visibleTeams = fullScreen ? teams : teams.slice(0, PREVIEW_COUNT);

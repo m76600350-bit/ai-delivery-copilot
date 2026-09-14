@@ -79,7 +79,10 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, queryParams, page]);
+    // lastSyncedAt: refetch after a sync completes, so this list doesn't
+    // keep showing pre-sync statuses/fields until an unrelated filter or
+    // page change happens to trigger a refetch.
+  }, [jiraConnected, queryParams, page, lastSyncedAt]);
 
   const handleExport = useCallback(async () => {
     setIsExporting(true);

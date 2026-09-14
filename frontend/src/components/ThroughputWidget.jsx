@@ -11,7 +11,7 @@ import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 // why). localTeam/localType let this widget additionally narrow itself
 // beyond the shared filters via its own funnel, same override pattern as
 // TeamsSummaryWidget's local period.
-export default function ThroughputWidget({ dashboardFilters, filterOptions, localTeam, localType, onLocalTeamChange, onLocalTypeChange, onRemove, onExpand, fullScreen }) {
+export default function ThroughputWidget({ dashboardFilters, lastSyncedAt, filterOptions, localTeam, localType, onLocalTeamChange, onLocalTypeChange, onRemove, onExpand, fullScreen }) {
   const [data, setData] = useState({ weeks: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -41,7 +41,9 @@ export default function ThroughputWidget({ dashboardFilters, filterOptions, loca
     return () => {
       cancelled = true;
     };
-  }, [dashboardFilters, localTeam, localType]);
+    // lastSyncedAt: refetch after a sync completes — see AttentionWidget's
+    // matching comment for why this is needed.
+  }, [dashboardFilters, localTeam, localType, lastSyncedAt]);
 
   const weeks = data.weeks || [];
   const max = Math.max(1, ...weeks.map((w) => w.count));

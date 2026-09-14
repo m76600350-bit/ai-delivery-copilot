@@ -34,7 +34,7 @@ function Sparkline({ values }) {
 // filters is the same shared Проект/Команда/Тип/Статус/Приоритет/Период
 // state Дашборд/Задачи/Команды use (4.1) — passed straight through to
 // computeTeamsReport, same as the Команды screen itself.
-export default function TeamsHealthReport({ jiraConnected, filters, onFilterChange, onResetFilters }) {
+export default function TeamsHealthReport({ jiraConnected, filters, onFilterChange, onResetFilters, lastSyncedAt }) {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -75,7 +75,9 @@ export default function TeamsHealthReport({ jiraConnected, filters, onFilterChan
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters]);
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
+  }, [jiraConnected, filters, lastSyncedAt]);
 
   if (!jiraConnected) {
     return (

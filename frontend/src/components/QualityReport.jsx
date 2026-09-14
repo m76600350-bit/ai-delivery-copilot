@@ -22,7 +22,7 @@ function BugRateChart({ data }) {
 
 // Проект/Команда filters из общего состояния (4.3) — Тип не применяется
 // (отчёт по определению про баги vs остальные типы).
-export default function QualityReport({ jiraConnected, filters, onFilterChange, onResetFilters }) {
+export default function QualityReport({ jiraConnected, filters, onFilterChange, onResetFilters, lastSyncedAt }) {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -58,7 +58,9 @@ export default function QualityReport({ jiraConnected, filters, onFilterChange, 
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters]);
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
+  }, [jiraConnected, filters, lastSyncedAt]);
 
   if (!jiraConnected) {
     return (

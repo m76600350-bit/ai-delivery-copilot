@@ -42,14 +42,14 @@ export default function Reports({ jiraConnected, filters, onFilterChange, onRese
 
         <div className="flex-1 min-w-0">
           {activeTemplate === 'status' && (
-            <StatusDeliveryReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} />
+            <StatusDeliveryReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} lastSyncedAt={lastSyncedAt} />
           )}
-          {activeTemplate === 'sprint' && <SprintSummaryReport jiraConnected={jiraConnected} filters={filters} />}
+          {activeTemplate === 'sprint' && <SprintSummaryReport jiraConnected={jiraConnected} filters={filters} lastSyncedAt={lastSyncedAt} />}
           {activeTemplate === 'quality' && (
-            <QualityReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} />
+            <QualityReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} lastSyncedAt={lastSyncedAt} />
           )}
           {activeTemplate === 'teams_health' && (
-            <TeamsHealthReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} />
+            <TeamsHealthReport jiraConnected={jiraConnected} filters={filters} onFilterChange={onFilterChange} onResetFilters={onResetFilters} lastSyncedAt={lastSyncedAt} />
           )}
         </div>
       </div>

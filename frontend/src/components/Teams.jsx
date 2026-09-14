@@ -306,7 +306,9 @@ export default function Teams({ jiraConnected, onNavigateToTasks, filters, onFil
     return () => {
       cancelled = true;
     };
-  }, [jiraConnected, filters]);
+    // lastSyncedAt: refetch after a sync completes — see Tasks.jsx's
+    // matching comment for why this is needed.
+  }, [jiraConnected, filters, lastSyncedAt]);
 
   const expandedTeamData = useMemo(
     () => report.teams.find((t) => t.team === expandedTeam) || null,
