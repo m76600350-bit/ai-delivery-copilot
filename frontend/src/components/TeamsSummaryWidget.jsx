@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getDashboardTeamsSummary } from '../api.js';
 import WidgetMenu from './WidgetMenu.jsx';
 import WidgetFilterPopover from './WidgetFilterPopover.jsx';
+import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 
 const PERIOD_OPTIONS = [
   { value: 'inherit', label: 'Как на дашборде' },
@@ -80,7 +81,7 @@ export default function TeamsSummaryWidget({ dashboardFilters, localPeriod, onLo
   const localFilterActive = Boolean(localPeriod && localPeriod !== 'inherit');
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>
       <div className="flex items-center justify-between mb-1 shrink-0">
         <p className="text-sm font-medium text-gray-700">Задачи по командам</p>
         <div className="flex items-center gap-2">

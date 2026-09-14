@@ -3,6 +3,7 @@ import { getDashboardThroughput } from '../api.js';
 import WidgetMenu from './WidgetMenu.jsx';
 import WidgetFilterPopover from './WidgetFilterPopover.jsx';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
+import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 
 // dashboardFilters supplies Проект/Команда/Тип/Статус/Приоритет — the
 // widget's own 7-week window is intentionally independent of the shared
@@ -47,7 +48,7 @@ export default function ThroughputWidget({ dashboardFilters, filterOptions, loca
   const localFilterActive = localTeam.length > 0 || localType.length > 0;
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>
       <div className="flex items-center justify-between mb-1 shrink-0">
         <p className="text-sm font-medium text-gray-700">Throughput по неделям</p>
         <div className="flex items-center gap-2">

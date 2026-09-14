@@ -5,6 +5,7 @@ import WidgetFilterPopover from './WidgetFilterPopover.jsx';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
 import BurndownChart from './BurndownChart.jsx';
 import MultiSprintBurndownChart from './MultiSprintBurndownChart.jsx';
+import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 
 // Cycled by selection order — distinct enough at a glance, and stays
 // readable against the white card background. Only this Dashboard widget
@@ -103,7 +104,7 @@ export default function SprintBurndownWidget({ onRemove, onExpand, fullScreen })
   const anySprintFound = reports.some((r) => r.sprint);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>
       <div className="flex items-center justify-between mb-1 shrink-0">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-gray-700">

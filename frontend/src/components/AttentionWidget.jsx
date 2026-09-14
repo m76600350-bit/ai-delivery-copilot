@@ -3,6 +3,7 @@ import { getDashboardAttention } from '../api.js';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
 import WidgetMenu from './WidgetMenu.jsx';
 import WidgetFilterPopover from './WidgetFilterPopover.jsx';
+import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 
 const PROBLEM_BADGE_CLASS = {
   'блокер': 'bg-red-100 text-red-700',
@@ -70,7 +71,7 @@ export default function AttentionWidget({ dashboardFilters, siteUrl: fallbackSit
   }, [dashboardFilters, effectivePeriod, fullScreen]);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>
       <div className="flex items-center justify-between mb-3 shrink-0">
         <p className="text-sm font-medium text-gray-700">Требует внимания</p>
         <div className="flex items-center gap-2">

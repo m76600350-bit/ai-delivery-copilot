@@ -10,6 +10,7 @@ import TeamsSummaryWidget from './TeamsSummaryWidget.jsx';
 import ThroughputWidget from './ThroughputWidget.jsx';
 import SprintBurndownWidget from './SprintBurndownWidget.jsx';
 import { getDashboardWidgets, setDashboardWidgetEnabled } from '../api.js';
+import { widgetHeightClass } from '../dashboardWidgetLayout.js';
 
 const PERIOD_OPTIONS = [
   { value: 'inherit', label: 'Как на дашборде' },
@@ -90,7 +91,7 @@ function BreakdownCard({ title, data, onExpand, onRemove, localPeriod, onLocalPe
   const localFilterActive = Boolean(localPeriod && localPeriod !== 'inherit');
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative h-full flex flex-col">
+    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative flex flex-col ${widgetHeightClass(fullScreen)}`}>
       <div className="flex items-center justify-between mb-3 shrink-0">
         <p className="text-sm font-medium text-gray-700">{title}</p>
         <div className="flex items-center gap-2">
@@ -353,12 +354,15 @@ export default function Dashboard({ stats, jiraConnected, onSyncJira, onNavigate
         </p>
       )}
 
-      {/* 1.1/1.2 — grid default stretch makes every widget in a row match the
-          tallest one; each widget's own root (h-full flex flex-col) plus an
-          internal overflow-y-auto body is what keeps the CARD itself from
-          growing past that height while its content still scrolls. */}
+      {/* Every widget card uses the SAME fixed height (DASHBOARD_WIDGET_HEIGHT_CLASS
+          in dashboardWidgetLayout.js) regardless of which row it's in — not
+          grid row-stretch, which only equalizes heights WITHIN a row and
+          leaves different rows at different heights. `items-start` keeps the
+          grid from stretching cells to a shared row height on top of that.
+          Content that doesn't fit scrolls internally (each widget's own
+          overflow-y-auto body) rather than growing the card. */}
       {enabledWidgets.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           {enabledWidgets.map((w) => renderWidget(w.widgetType))}
         </div>
       )}
