@@ -279,6 +279,32 @@ async function ensureSchema() {
         summary TEXT NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+
+      -- Every threshold/multiplier that used to be a hardcoded constant
+      -- scattered across lib/problemIssues.js, routes/teams.js and
+      -- routes/sprints.js — now user-editable from Настройки → "Метрики и
+      -- SLA" (see lib/metricThresholds.js for the canonical key list,
+      -- defaults, and labels/descriptions the settings UI reads).
+      CREATE TABLE IF NOT EXISTS metric_thresholds (
+        key TEXT PRIMARY KEY,
+        value NUMERIC NOT NULL
+      );
+
+      -- Seeded once here with the same defaults that used to be the
+      -- hardcoded values, so an existing install's behavior doesn't change
+      -- on upgrade; ON CONFLICT DO NOTHING keeps a user's own edits intact
+      -- on every later ensureSchema() call.
+      INSERT INTO metric_thresholds (key, value) VALUES
+        ('aging_wip_ratio_threshold', 0.9),
+        ('health_wip_signal_threshold', 1.0),
+        ('health_cycle_time_signal_threshold', 1.3),
+        ('health_velocity_signal_threshold', 0.7),
+        ('health_risk_signal_count', 1),
+        ('health_overload_signal_count', 2),
+        ('workload_normal_max', 3),
+        ('workload_at_limit_max', 6),
+        ('review_stuck_days_threshold', 3)
+      ON CONFLICT (key) DO NOTHING;
     `).then(() => true).catch((err) => {
       schemaReady = null;
       throw err;

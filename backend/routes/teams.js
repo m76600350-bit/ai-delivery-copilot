@@ -1,6 +1,7 @@
 const express = require('express');
 const { ensureSchema, getPool } = require('../db');
 const { resolvePeriodRange } = require('../lib/period');
+const { getThresholds } = require('../lib/metricThresholds');
 
 const router = express.Router();
 
@@ -81,6 +82,7 @@ function resolveLastSprint(teamSprints) {
 async function computeTeamsReport(query) {
   await ensureSchema();
   const pool = getPool();
+  const thresholds = await getThresholds();
 
   const teamFilter = toArray(query.team);
   const projectFilter = toArray(query.project);
@@ -272,7 +274,7 @@ async function computeTeamsReport(query) {
         // Signal 1: current WIP vs. this team's configured limit.
         if (wipLimitConfigured && wipLimitSum > 0) {
           const ratio = wipCount / wipLimitSum;
-          signals.push({ name: 'wip', ratio, triggered: ratio > 1.0 });
+          signals.push({ name: 'wip', ratio, triggered: ratio > thresholds.health_wip_signal_threshold });
         }
 
         // Signal 2: recent cycle time vs. this team's all-time average.
@@ -283,7 +285,7 @@ async function computeTeamsReport(query) {
         if (recentCompleted.length && cycleTimeAvg) {
           const recentAvg = avg(recentCompleted.map((i) => Number(i.cycle_time)));
           const ratio = recentAvg / cycleTimeAvg;
-          signals.push({ name: 'cycle_time', ratio, triggered: ratio > 1.3 });
+          signals.push({ name: 'cycle_time', ratio, triggered: ratio > thresholds.health_cycle_time_signal_threshold });
         }
 
         // Signal 3: the most recently closed sprint's completed SP vs. the
@@ -295,12 +297,20 @@ async function computeTeamsReport(query) {
           const baselineAvg = avg(baselineSprints.map((s) => sumSpForSprint(s.id, { onlyDone: true })));
           if (baselineAvg > 0) {
             const ratio = evalSp / baselineAvg;
-            signals.push({ name: 'velocity', ratio, triggered: ratio < 0.7 });
+            signals.push({ name: 'velocity', ratio, triggered: ratio < thresholds.health_velocity_signal_threshold });
           }
         }
 
+        // Configurable via "Метрики и SLA": how many of the (up to 3)
+        // signals above trigger "риск" vs. "перегруз" — overload is checked
+        // first since its count is expected to be >= the risk count.
         const triggeredCount = signals.filter((s) => s.triggered).length;
-        health = triggeredCount === 0 ? 'normal' : triggeredCount === 1 ? 'risk' : 'overload';
+        health =
+          triggeredCount >= thresholds.health_overload_signal_count
+            ? 'overload'
+            : triggeredCount >= thresholds.health_risk_signal_count
+              ? 'risk'
+              : 'normal';
       }
 
       // --- Карточка команды: график SP по спринтам (2.3) ---
@@ -344,7 +354,12 @@ async function computeTeamsReport(query) {
       const peopleLoad = [...peopleMap.values()]
         .map((p) => ({
           ...p,
-          status: p.inProgress <= 3 ? 'normal' : p.inProgress <= 6 ? 'at_limit' : 'overload',
+          status:
+            p.inProgress <= thresholds.workload_normal_max
+              ? 'normal'
+              : p.inProgress <= thresholds.workload_at_limit_max
+                ? 'at_limit'
+                : 'overload',
         }))
         .sort((a, b) => b.inProgress - a.inProgress);
 

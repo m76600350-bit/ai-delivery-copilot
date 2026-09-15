@@ -181,4 +181,19 @@ export async function exportTeamsHealthCsv(payload) {
   return res.data;
 }
 
+export async function getMetricThresholds() {
+  const res = await api.get('/settings/metric-thresholds');
+  return res.data;
+}
+
+export async function setMetricThreshold(key, value) {
+  const res = await api.put(`/settings/metric-thresholds/${key}`, { value });
+  return res.data;
+}
+
+export async function resetMetricThresholds() {
+  const res = await api.post('/settings/metric-thresholds/reset');
+  return res.data;
+}
+
 export default api;

@@ -4,6 +4,7 @@ import FieldMapping from './FieldMapping.jsx';
 import SyncHistory from './SyncHistory.jsx';
 import TeamRoles from './TeamRoles.jsx';
 import WipLimitsModal from './WipLimitsModal.jsx';
+import MetricThresholdsSettings from './MetricThresholdsSettings.jsx';
 import useSyncProgress from '../useSyncProgress.js';
 
 function domainFromSiteUrl(siteUrl) {
@@ -168,7 +169,12 @@ export default function Settings({ jiraStatus, onStatusChange, onDataLoaded }) {
 
         {activeSection === 'people' && (jiraStatus?.connected ? <TeamRoles /> : <p className="text-sm text-gray-500">Подключите Jira, чтобы назначать роли.</p>)}
 
-        {activeSection === 'metrics' && (jiraStatus?.connected ? <WipLimitsModal /> : <p className="text-sm text-gray-500">Подключите Jira, чтобы настроить WIP-лимиты.</p>)}
+        {activeSection === 'metrics' && (
+          <>
+            <MetricThresholdsSettings />
+            {jiraStatus?.connected ? <WipLimitsModal /> : <p className="text-sm text-gray-500">Подключите Jira, чтобы настроить WIP-лимиты.</p>}
+          </>
+        )}
 
         {activeSection === 'alerts' && (
           <div className="bg-white rounded-lg border border-gray-200 p-6">

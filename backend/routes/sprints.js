@@ -1,13 +1,9 @@
 const express = require('express');
 const { ensureSchema, getPool } = require('../db');
+const { getThresholds } = require('../lib/metricThresholds');
 
 const router = express.Router();
 
-// Temporary fixed threshold for "висит на ревью" — spec allows either this
-// or 1.5x a team's average time-in-status; the latter needs per-team status
-// baselines we don't compute anywhere yet, so this is the simpler of the
-// two options offered, called out here as a placeholder.
-const REVIEW_STALE_DAYS = 3;
 // "текущий + все сохранённые закрытые, до 5 штук" — the active sprint plus
 // up to this many of its most recent closed siblings.
 const MAX_HISTORY_SPRINTS = 5;
@@ -198,7 +194,7 @@ function computeBurndownAndCfd(sprint, rows, eventsByIssueId) {
   return { burndown, cfd };
 }
 
-function computeRisks(rows, blockedIssueIds) {
+function computeRisks(rows, blockedIssueIds, reviewStuckDaysThreshold) {
   const risks = [];
   for (const row of rows) {
     const daysInStatus = Math.max(0, Math.floor((Date.now() - new Date(row.updated_at).getTime()) / 86400000));
@@ -211,7 +207,7 @@ function computeRisks(rows, blockedIssueIds) {
     if (blockedIssueIds.has(row.issue_id)) {
       problem = 'блокер';
       action = 'эскалация';
-    } else if (/ревью|review/i.test(row.status || '') && daysInStatus > REVIEW_STALE_DAYS) {
+    } else if (/ревью|review/i.test(row.status || '') && daysInStatus > reviewStuckDaysThreshold) {
       problem = 'висит на ревью';
       action = 'найти ревьюера';
     } else if (!row.assignee && row.status_category === 'indeterminate') {
@@ -267,6 +263,7 @@ function sprintOutcome(sprint, agg) {
 async function computeSprintReport(query) {
   await ensureSchema();
   const pool = getPool();
+  const thresholds = await getThresholds();
 
   const teamFilter = toArray(query.team);
   const typeFilter = toArray(query.type);
@@ -354,7 +351,10 @@ async function computeSprintReport(query) {
     // "Риски спринта" is scoped to the active sprint specifically (per its
     // own description) — showing it for a closed sprint the user happens to
     // have selected wouldn't mean anything (nothing left to escalate).
-    const risks = selectedSprint && selectedSprint.state === 'active' ? computeRisks(selectedRows, blockedIssueIds) : [];
+    const risks =
+      selectedSprint && selectedSprint.state === 'active'
+        ? computeRisks(selectedRows, blockedIssueIds, thresholds.review_stuck_days_threshold)
+        : [];
 
     const { burndown, cfd } = selectedSprint ? computeBurndownAndCfd(selectedSprint, selectedRows, eventsByIssueId) : { burndown: [], cfd: [] };
 
