@@ -155,6 +155,18 @@ function mapJiraFields(issue, fieldMapping) {
     team: mappedTeam,
     createdAt: f.created || null,
     updatedAt: f.updated || null,
+    // NOT the real "started work" timestamp — just a same-sync placeholder
+    // for an issue that's never had its changelog fetched yet (so there's
+    // nothing better available). The sync loop below overwrites this with
+    // the changelog-derived value (first transition out of the "new"
+    // category, from computeLeadCycleReopen's statusTimeline) whenever
+    // needsHistory is true, which it always is for a brand-new issue — so
+    // this fallback is really only reached pre-first-sync. It must NOT be
+    // used as a general stand-in for "no changelog data this sync" (an
+    // earlier version of this code did exactly that, permanently freezing
+    // started_at at the issue's creation date — regressing "зависла" aging
+    // WIP into effectively "time since creation" that never budged even as
+    // the issue moved through several in-progress statuses).
     startedAt: statusCategory && statusCategory !== CATEGORY_KEY.NEW ? f.created : null,
     // The real resolution timestamp, not a heuristic — used as-is for
     // lead time and as the right edge of the cycle-time status timeline.
@@ -878,6 +890,11 @@ router.post('/sync', async (req, res) => {
       let reopenCount = existing?.reopen_count ?? 0;
       let statusTimeBreakdown = existing?.status_time_breakdown ?? null;
       let statusTimeline = null;
+      // Carries forward the last changelog-derived value when this sync
+      // skips the changelog fetch (nothing that could change it happened);
+      // mapped.startedAt is only the pre-changelog placeholder for a row
+      // that has never had one computed at all.
+      let startedAt = existing?.started_at ?? mapped.startedAt;
 
       if (needsHistory) {
         const histories = await fetchChangelog(accessToken, cloudId, mapped.issueKey);
@@ -896,6 +913,16 @@ router.post('/sync', async (req, res) => {
         reopenCount = computed.reopenCount;
         statusTimeBreakdown = computed.statusTimeBreakdown;
         statusTimeline = computed.statusTimeline;
+
+        // "Started work" = the first time the issue's category left "new"
+        // (backlog/to-do) — the same definition computeLeadCycleReopen's own
+        // cycleMs already uses (its `hasStartedWork` flag latches on exactly
+        // this event). Moving between different non-new/non-done statuses
+        // afterwards does NOT reset it — "зависла"/aging WIP measures total
+        // time actively worked, not time in the current sub-status. An issue
+        // that never left "new" has no started_at (still in the backlog).
+        const firstWorkEvent = statusTimeline.find((ev) => ev.category && ev.category !== CATEGORY_KEY.NEW);
+        startedAt = firstWorkEvent ? firstWorkEvent.at : null;
       }
 
       const statusTimeBreakdownParam = statusTimeBreakdown ? JSON.stringify(statusTimeBreakdown) : null;
@@ -913,7 +940,7 @@ router.post('/sync', async (req, res) => {
           [
             mapped.issueKey, mapped.project, mapped.issueType, mapped.summary,
             mapped.status, mapped.statusCategory, mapped.priority, mapped.assignee,
-            mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
+            mapped.team, mapped.createdAt, mapped.updatedAt, startedAt,
             mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
             mapped.storyPoints, mapped.labels, statusTimeBreakdownParam,
           ]
@@ -943,7 +970,7 @@ router.post('/sync', async (req, res) => {
            WHERE id = $20`,
           [
             mapped.project, mapped.issueType, mapped.summary, mapped.status, mapped.statusCategory,
-            mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, mapped.startedAt,
+            mapped.priority, mapped.assignee, mapped.team, mapped.createdAt, mapped.updatedAt, startedAt,
             mapped.resolvedAt, cycleTimeDays, leadTimeDays, reopenCount, mapped.sprint,
             mapped.storyPoints, mapped.labels, statusTimeBreakdownParam, existing.id,
           ]
