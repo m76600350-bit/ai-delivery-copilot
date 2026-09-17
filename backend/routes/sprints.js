@@ -427,6 +427,13 @@ async function computeSprintReport(query) {
           forecastPct,
           addedAfterStartSp: agg.addedAfterStartSp,
           scopeCreepPct: agg.scopeCreepPct,
+          // Already computed by computeSprintAggregate for "История
+          // спринтов" rows — exposed here too so a single sprint's own
+          // report carries them, for the "Сравнить спринты" modal (which
+          // compares by sprint id, not by whatever happens to be in the
+          // capped-to-MAX_HISTORY_SPRINTS history list).
+          carriedOverCount: agg.carriedOverCount,
+          avgCycleTime: agg.avgCycleTime,
           risksCount: risks.length,
           risksCategories: [...new Set(risks.map((r) => r.problem))],
           lagSp,

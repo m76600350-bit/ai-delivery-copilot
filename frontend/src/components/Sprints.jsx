@@ -3,6 +3,7 @@ import { getSprintsFilters, getSprintsReport } from '../api.js';
 import MultiSelectFilter from './MultiSelectFilter.jsx';
 import BurndownChart from './BurndownChart.jsx';
 import SectionHeader from './SectionHeader.jsx';
+import SprintCompareModal from './SprintCompareModal.jsx';
 
 function fmtShortDate(value) {
   if (!value) return '—';
@@ -124,6 +125,7 @@ export default function Sprints({ jiraConnected, onSyncJira, lastSyncedAt }) {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     if (!jiraConnected) return;
@@ -253,13 +255,22 @@ export default function Sprints({ jiraConnected, onSyncJira, lastSyncedAt }) {
             <h3 className="text-sm font-medium text-gray-700">История спринтов</h3>
             <p className="text-xs text-gray-400">обязательства, факт и переносы</p>
           </div>
-          <button
-            onClick={() => exportHistoryCsv(report?.history || [])}
-            disabled={!report?.history?.length}
-            className="text-sm border border-gray-300 rounded px-4 py-2 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Экспорт
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowCompare(true)}
+              disabled={filterOptions.sprints.length < 2}
+              className="text-sm border border-gray-300 rounded px-4 py-2 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Сравнить спринты
+            </button>
+            <button
+              onClick={() => exportHistoryCsv(report?.history || [])}
+              disabled={!report?.history?.length}
+              className="text-sm border border-gray-300 rounded px-4 py-2 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Экспорт
+            </button>
+          </div>
         </div>
 
         {!report?.history?.length ? (
@@ -348,6 +359,14 @@ export default function Sprints({ jiraConnected, onSyncJira, lastSyncedAt }) {
           </div>
         )}
       </div>
+
+      {showCompare && (
+        <SprintCompareModal
+          sprintOptions={filterOptions.sprints}
+          teamFilter={filters.team}
+          onClose={() => setShowCompare(false)}
+        />
+      )}
     </div>
   );
 }

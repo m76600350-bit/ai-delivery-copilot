@@ -4,9 +4,45 @@ import StatusBadge from './StatusBadge.jsx';
 import TaskDetailPanel from './TaskDetailPanel.jsx';
 import FilterBar from './FilterBar.jsx';
 import SectionHeader from './SectionHeader.jsx';
+import ColumnsMenu from './ColumnsMenu.jsx';
 
 function formatDays(value) {
   return value == null ? '—' : `${value} дн`;
+}
+
+// Ключ/Название are always on (rendered separately below, not in this
+// list) — everything else is toggleable via the "Колонки" menu (1.2/1.3).
+const OPTIONAL_COLUMNS = [
+  { key: 'type', label: 'Тип' },
+  { key: 'team', label: 'Команда' },
+  { key: 'assignee', label: 'Исполнитель' },
+  { key: 'status', label: 'Статус' },
+  { key: 'priority', label: 'Приоритет' },
+  { key: 'daysInStatus', label: 'Дней в статусе' },
+  { key: 'cycleTime', label: 'Cycle time' },
+  { key: 'leadTime', label: 'LT' },
+  { key: 'storyPoints', label: 'Story Points' },
+  { key: 'sprint', label: 'Спринт' },
+];
+const ALWAYS_ON_COLUMNS = [
+  { key: 'issueKey', label: 'Ключ', alwaysOn: true },
+  { key: 'summary', label: 'Название', alwaysOn: true },
+];
+const ALL_OPTIONAL_KEYS = OPTIONAL_COLUMNS.map((c) => c.key);
+const COLUMNS_STORAGE_KEY = 'delivery-board:tasks-columns';
+
+// Defaults to every column visible (1.5) — a missing/corrupt localStorage
+// value falls back to the same, rather than an empty table.
+function loadVisibleColumns() {
+  try {
+    const raw = localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (!raw) return ALL_OPTIONAL_KEYS;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return ALL_OPTIONAL_KEYS;
+    return parsed.filter((k) => ALL_OPTIONAL_KEYS.includes(k));
+  } catch {
+    return ALL_OPTIONAL_KEYS;
+  }
 }
 
 function useDebouncedValue(value, delayMs) {
@@ -32,6 +68,16 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
   const [error, setError] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState(loadVisibleColumns);
+
+  const handleColumnsChange = (next) => {
+    setVisibleColumns(next);
+    try {
+      localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Non-fatal — the choice just won't survive a reload this time.
+    }
+  };
 
   const queryParams = useMemo(
     () => ({
@@ -119,7 +165,8 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
     <div className="max-w-7xl mx-auto space-y-4">
       <SectionHeader title="Задачи" lastSyncedAt={lastSyncedAt} onSync={onSyncJira} />
 
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-3">
+        <ColumnsMenu columns={[...ALWAYS_ON_COLUMNS, ...OPTIONAL_COLUMNS]} visible={visibleColumns} onChange={handleColumnsChange} />
         <button
           onClick={handleExport}
           disabled={isExporting || result.total === 0}
@@ -150,16 +197,16 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
               <tr className="text-left text-gray-500 border-b border-gray-200">
                 <th className="py-2 px-4">Ключ</th>
                 <th className="py-2 px-4">Название</th>
-                <th className="py-2 px-4">Тип</th>
-                <th className="py-2 px-4">Команда</th>
-                <th className="py-2 px-4">Исполнитель</th>
-                <th className="py-2 px-4">Статус</th>
-                <th className="py-2 px-4">Приоритет</th>
-                <th className="py-2 px-4">Дней в статусе</th>
-                <th className="py-2 px-4">Cycle time</th>
-                <th className="py-2 px-4">LT</th>
-                <th className="py-2 px-4">Story Points</th>
-                <th className="py-2 px-4">Спринт</th>
+                {visibleColumns.includes('type') && <th className="py-2 px-4">Тип</th>}
+                {visibleColumns.includes('team') && <th className="py-2 px-4">Команда</th>}
+                {visibleColumns.includes('assignee') && <th className="py-2 px-4">Исполнитель</th>}
+                {visibleColumns.includes('status') && <th className="py-2 px-4">Статус</th>}
+                {visibleColumns.includes('priority') && <th className="py-2 px-4">Приоритет</th>}
+                {visibleColumns.includes('daysInStatus') && <th className="py-2 px-4">Дней в статусе</th>}
+                {visibleColumns.includes('cycleTime') && <th className="py-2 px-4">Cycle time</th>}
+                {visibleColumns.includes('leadTime') && <th className="py-2 px-4">LT</th>}
+                {visibleColumns.includes('storyPoints') && <th className="py-2 px-4">Story Points</th>}
+                {visibleColumns.includes('sprint') && <th className="py-2 px-4">Спринт</th>}
               </tr>
             </thead>
             <tbody>
@@ -171,18 +218,24 @@ export default function Tasks({ jiraConnected, filters, onFilterChange, onResetF
                 >
                   <td className="py-2 px-4 whitespace-nowrap font-medium text-gray-700">{task.issueKey}</td>
                   <td className="py-2 px-4 max-w-xs truncate">{task.summary}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.issueType}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.team}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.assignee || 'не назначен'}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">
-                    <StatusBadge status={task.status} statusCategory={task.statusCategory} />
-                  </td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.priority}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.daysInStatus == null ? '—' : `${task.daysInStatus} д`}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.cycleTime)}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.leadTimeDays)}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.storyPoints ?? '—'}</td>
-                  <td className="py-2 px-4 whitespace-nowrap">{task.sprint || '—'}</td>
+                  {visibleColumns.includes('type') && <td className="py-2 px-4 whitespace-nowrap">{task.issueType}</td>}
+                  {visibleColumns.includes('team') && <td className="py-2 px-4 whitespace-nowrap">{task.team}</td>}
+                  {visibleColumns.includes('assignee') && (
+                    <td className="py-2 px-4 whitespace-nowrap">{task.assignee || 'не назначен'}</td>
+                  )}
+                  {visibleColumns.includes('status') && (
+                    <td className="py-2 px-4 whitespace-nowrap">
+                      <StatusBadge status={task.status} statusCategory={task.statusCategory} />
+                    </td>
+                  )}
+                  {visibleColumns.includes('priority') && <td className="py-2 px-4 whitespace-nowrap">{task.priority}</td>}
+                  {visibleColumns.includes('daysInStatus') && (
+                    <td className="py-2 px-4 whitespace-nowrap">{task.daysInStatus == null ? '—' : `${task.daysInStatus} д`}</td>
+                  )}
+                  {visibleColumns.includes('cycleTime') && <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.cycleTime)}</td>}
+                  {visibleColumns.includes('leadTime') && <td className="py-2 px-4 whitespace-nowrap">{formatDays(task.leadTimeDays)}</td>}
+                  {visibleColumns.includes('storyPoints') && <td className="py-2 px-4 whitespace-nowrap">{task.storyPoints ?? '—'}</td>}
+                  {visibleColumns.includes('sprint') && <td className="py-2 px-4 whitespace-nowrap">{task.sprint || '—'}</td>}
                 </tr>
               ))}
             </tbody>
